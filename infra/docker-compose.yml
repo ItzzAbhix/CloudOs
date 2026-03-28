@@ -1,0 +1,77 @@
+services:
+  nginx-proxy-manager:
+    image: jc21/nginx-proxy-manager:2
+    container_name: nginx-proxy-manager
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "81:81"
+      - "443:443"
+    environment:
+      TZ: ${TZ}
+    volumes:
+      - /opt/cloudos/data/nginx-proxy-manager/data:/data
+      - /opt/cloudos/data/nginx-proxy-manager/letsencrypt:/etc/letsencrypt
+    networks:
+      - cloudos
+
+  portainer:
+    image: portainer/portainer-ce:2.27.1
+    container_name: portainer
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+    command:
+      - --admin-password-file=/run/secrets/portainer_admin_password
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/cloudos/data/portainer:/data
+    secrets:
+      - portainer_admin_password
+    networks:
+      - cloudos
+
+  n8n:
+    image: n8nio/n8n:1.84.1
+    container_name: n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      TZ: ${TZ}
+      N8N_HOST: ${N8N_HOST}
+      N8N_PORT: ${N8N_PORT}
+      N8N_PROTOCOL: ${N8N_PROTOCOL}
+      WEBHOOK_URL: ${WEBHOOK_URL}
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+      N8N_BASIC_AUTH_ACTIVE: "true"
+      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD}
+    volumes:
+      - /opt/cloudos/data/n8n:/home/node/.n8n
+    networks:
+      - cloudos
+
+  dozzle:
+    image: amir20/dozzle:v8.12.10
+    container_name: dozzle
+    restart: unless-stopped
+    ports:
+      - "9999:8080"
+    environment:
+      TZ: ${TZ}
+      DOZZLE_NO_ANALYTICS: "true"
+      DOZZLE_LEVEL: info
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - cloudos
+
+networks:
+  cloudos:
+    driver: bridge
+
+secrets:
+  portainer_admin_password:
+    file: /opt/cloudos/secrets/portainer_admin_password

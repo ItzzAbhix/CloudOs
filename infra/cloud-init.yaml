@@ -1,0 +1,52 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+
+users:
+  - default
+  - name: cloudadmin
+    gecos: CloudOS Admin
+    groups: sudo
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: true
+    ssh_authorized_keys:
+      - ssh-ed25519 REPLACE_WITH_YOUR_PUBLIC_KEY
+
+write_files:
+  - path: /opt/cloudos/.env
+    permissions: "0600"
+    content: |
+      TZ=Asia/Kolkata
+      PUBLIC_DOMAIN=cloudos.local
+      N8N_HOST=n8n.cloudos.local
+      N8N_PROTOCOL=https
+      N8N_PORT=5678
+      NPM_ADMIN_EMAIL=admin@example.com
+      N8N_ENCRYPTION_KEY=replace-with-a-long-random-secret
+      N8N_BASIC_AUTH_USER=admin
+      N8N_BASIC_AUTH_PASSWORD=replace-with-a-strong-password
+      WEBHOOK_URL=https://n8n.cloudos.local/
+      GENERIC_TIMEZONE=Asia/Kolkata
+
+runcmd:
+  - mkdir -p /opt/cloudos
+  - curl -fsSL https://get.docker.com | sh
+  - usermod -aG docker cloudadmin
+  - apt-get install -y docker-compose-plugin ufw fail2ban curl git ca-certificates apache2-utils
+  - mkdir -p /opt/cloudos/data/nginx-proxy-manager/data
+  - mkdir -p /opt/cloudos/data/nginx-proxy-manager/letsencrypt
+  - mkdir -p /opt/cloudos/data/portainer
+  - mkdir -p /opt/cloudos/data/n8n
+  - mkdir -p /opt/cloudos/secrets
+  - sh -c "openssl rand -base64 24 | tr -d '\n' | htpasswd -niB admin | cut -d: -f2 > /opt/cloudos/secrets/portainer_admin_password"
+  - ufw allow OpenSSH
+  - ufw allow 80/tcp
+  - ufw allow 81/tcp
+  - ufw allow 443/tcp
+  - ufw allow 9000/tcp
+  - ufw allow 5678/tcp
+  - ufw allow 9999/tcp
+  - ufw --force enable
+
+final_message: "CloudOS base image provisioning complete. Copy docker-compose.yml to /opt/cloudos and start the stack."
