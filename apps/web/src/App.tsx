@@ -1,100 +1,56 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 
-type User = {
-  id: string;
-  username: string;
-  role: "admin" | "user";
-};
-
+type User = { id: string; username: string; role: "admin" | "user" };
 type Overview = {
-  appName: string;
-  stats: {
-    cpuPercent: number;
-    memoryUsedMb: number;
-    memoryTotalMb: number;
-    loadAverage: number[];
-    uptimeSeconds: number;
-    host: string;
-    platform: string;
-  };
+  stats: { cpuPercent: number; memoryUsedMb: number; memoryTotalMb: number; uptimeSeconds: number; host: string };
   counters: Record<string, number>;
-  recentAudit: Array<{ id: string; type: string; message: string; actor: string; createdAt: string }>;
+  recentAudit: Array<{ id: string; type: string; message: string; createdAt: string }>;
 };
-
-type Service = {
-  id: string;
-  name: string;
-  category: string;
-  description: string;
-  port?: number;
-  actions: string[];
-  runtimeStatus: string;
-};
-
-type Device = {
-  id: string;
-  name: string;
-  status: string;
-  ipAddress: string;
-  lastSeenAt: string;
-  usageMb: number;
-  killSwitchEnabled: boolean;
-};
-
+type Service = { id: string; name: string; category: string; description: string; port?: number; actions: string[]; runtimeStatus: string };
+type Device = { id: string; name: string; status: string; ipAddress: string; lastSeenAt: string; usageMb: number; killSwitchEnabled: boolean };
 type FileEntry = { name: string; path: string; type: string; size: number; updatedAt: string };
-type Download = { id: string; url: string; status: string; progress: number; targetPath: string; updatedAt: string; error?: string };
-type Media = { id: string; title: string; type: string; path: string; subtitleCount: number };
-type Workflow = { id: string; name: string; trigger?: string; action: string; enabled: boolean; condition?: string };
-type NotificationTarget = { id: string; name: string; type: string; endpoint: string; enabled: boolean };
+type Download = { id: string; url: string; status: string; progress: number; targetPath: string; updatedAt: string };
+type Media = { id: string; title: string; type: string; subtitleCount: number };
+type Workflow = { id: string; name: string; trigger?: string; condition?: string; action: string };
+type NotificationTarget = { id: string; name: string; type: string; endpoint: string };
 type Analytics = {
   bandwidthByDevice: Array<{ name: string; usageMb: number }>;
   downloadsByStatus: Array<{ status: string; count: number }>;
-  auditTimeline: Array<{ id: string; message: string; createdAt: string; actor: string }>;
+  auditTimeline: Array<{ id: string; message: string; actor: string }>;
 };
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api${path}`, {
     credentials: "include",
-    headers: {
-      "content-type": "application/json",
-      ...(init?.headers ?? {})
-    },
+    headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
     ...init
   });
-
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(body || `Request failed: ${response.status}`);
-  }
-
-  if (response.status === 204) {
-    return undefined as T;
-  }
-
+  if (!response.ok) throw new Error(await response.text());
+  if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
 
 const navItems = [
-  { id: "overview", label: "Overview" },
-  { id: "services", label: "Services" },
-  { id: "vpn", label: "VPN" },
-  { id: "files", label: "Files" },
-  { id: "downloads", label: "Downloads" },
-  { id: "media", label: "Media" },
-  { id: "automation", label: "Automation" },
-  { id: "notifications", label: "Notifications" },
-  { id: "analytics", label: "Analytics" },
-  { id: "security", label: "Security" },
-  { id: "sharing", label: "Sharing" },
-  { id: "scripts", label: "Scripts" },
-  { id: "games", label: "Games" }
+  ["overview", "Overview"],
+  ["services", "Services"],
+  ["vpn", "VPN"],
+  ["files", "Files"],
+  ["downloads", "Downloads"],
+  ["media", "Media"],
+  ["automation", "Automation"],
+  ["notifications", "Notifications"],
+  ["analytics", "Analytics"],
+  ["security", "Security"],
+  ["sharing", "Sharing"],
+  ["scripts", "Scripts"],
+  ["games", "Games"]
 ] as const;
 
 function LoginPage({ onLogin }: { onLogin: (user: User) => void }) {
   const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("cloudosadmin");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState("");
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -111,11 +67,20 @@ function LoginPage({ onLogin }: { onLogin: (user: User) => void }) {
 
   return (
     <div className="login-shell">
-      <div className="login-card">
-        <p className="eyebrow">CloudOS</p>
-        <h1>Master Control Panel</h1>
-        <p className="muted">Secure access to your VM services, files, downloads, automation, and network controls.</p>
-        <form className="login-form" onSubmit={handleSubmit}>
+      <div className="login-panel">
+        <section className="login-showcase">
+          <p className="eyebrow">CloudOS</p>
+          <h1>Private infrastructure cockpit.</h1>
+          <p>One dashboard for VM health, VPN devices, automation, downloads, logs, files, and media.</p>
+          <div className="showcase-grid">
+            <div className="promo lilac"><span>Runtime</span><strong>Live</strong></div>
+            <div className="promo blue"><span>Network</span><strong>Private</strong></div>
+            <div className="promo mint"><span>Automation</span><strong>Ready</strong></div>
+          </div>
+        </section>
+        <form className="login-card" onSubmit={handleSubmit}>
+          <p className="eyebrow">Sign In</p>
+          <h2>Enter Dashboard</h2>
           <label>
             Username
             <input value={username} onChange={(event) => setUsername(event.target.value)} />
@@ -125,7 +90,7 @@ function LoginPage({ onLogin }: { onLogin: (user: User) => void }) {
             <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
           </label>
           {error ? <p className="error">{error}</p> : null}
-          <button type="submit">Enter Panel</button>
+          <button type="submit">Launch CloudOS</button>
         </form>
       </div>
     </div>
@@ -133,7 +98,7 @@ function LoginPage({ onLogin }: { onLogin: (user: User) => void }) {
 }
 
 function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
-  const [activeTab, setActiveTab] = useState<(typeof navItems)[number]["id"]>("overview");
+  const [activeTab, setActiveTab] = useState<(typeof navItems)[number][0]>("overview");
   const [overview, setOverview] = useState<Overview | null>(null);
   const [services, setServices] = useState<Service[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
@@ -144,11 +109,10 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [rules, setRules] = useState<Workflow[]>([]);
   const [notifications, setNotifications] = useState<NotificationTarget[]>([]);
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
-  const [networkEvents, setNetworkEvents] = useState<Array<{ id: string; source: string; message: string; severity: string; createdAt: string }>>([]);
+  const [networkEvents, setNetworkEvents] = useState<Array<{ id: string; source: string; message: string; severity: string }>>([]);
   const [shareLinks, setShareLinks] = useState<Array<{ id: string; path: string; expiresAt?: string }>>([]);
   const [scripts, setScripts] = useState<Array<{ id: string; name: string; command: string; description: string }>>([]);
-  const [logs, setLogs] = useState<string>("");
-  const [statusMessage, setStatusMessage] = useState<string>("");
+  const [logs, setLogs] = useState("");
   const [downloadUrl, setDownloadUrl] = useState("");
 
   async function refresh() {
@@ -164,7 +128,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
       notificationsResult,
       analyticsResult,
       networkResult,
-      sharingResult,
+      shareResult,
       scriptsResult
     ] = await Promise.all([
       api<Overview>("/overview"),
@@ -177,11 +141,10 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
       api<Workflow[]>("/automation/rules"),
       api<NotificationTarget[]>("/notifications"),
       api<Analytics>("/analytics"),
-      api<Array<{ id: string; source: string; message: string; severity: string; createdAt: string }>>("/security/network"),
+      api<Array<{ id: string; source: string; message: string; severity: string }>>("/security/network"),
       api<Array<{ id: string; path: string; expiresAt?: string }>>("/sharing"),
       api<Array<{ id: string; name: string; command: string; description: string }>>("/scripts")
     ]);
-
     setOverview(overviewResult);
     setServices(servicesResult);
     setDevices(devicesResult);
@@ -193,31 +156,37 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
     setNotifications(notificationsResult);
     setAnalytics(analyticsResult);
     setNetworkEvents(networkResult);
-    setShareLinks(sharingResult);
+    setShareLinks(shareResult);
     setScripts(scriptsResult);
   }
 
   useEffect(() => {
     void refresh();
-    const timer = window.setInterval(() => {
-      void refresh();
-    }, 15000);
+    const timer = window.setInterval(() => void refresh(), 15000);
     return () => window.clearInterval(timer);
   }, []);
 
-  async function serviceAction(id: string, action: "start" | "stop" | "restart") {
-    await api<Service[]>(`/services/${id}/action`, {
-      method: "POST",
-      body: JSON.stringify({ action })
-    });
-    setStatusMessage(`${action} triggered for ${id}`);
+  const headlineCards = useMemo(
+    () =>
+      overview
+        ? [
+            ["Services Online", `${overview.counters.servicesOnline}/${overview.counters.services}`, "peach"],
+            ["Connected Devices", `${overview.counters.devices}`, "blue"],
+            ["Automation Flows", `${overview.counters.workflows}`, "mint"],
+            ["Active Downloads", `${overview.counters.activeDownloads}`, "lilac"]
+          ]
+        : [],
+    [overview]
+  );
+
+  async function serviceAction(id: string, action: "restart") {
+    await api(`/services/${id}/action`, { method: "POST", body: JSON.stringify({ action }) });
     await refresh();
   }
 
   async function showLogs(id: string) {
     const result = await api<{ logs: string }>(`/services/${id}/logs`);
     setLogs(result.logs);
-    setActiveTab("services");
   }
 
   async function toggleDevice(id: string) {
@@ -227,29 +196,23 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
 
   async function createDownload(event: FormEvent) {
     event.preventDefault();
-    if (!downloadUrl) {
-      return;
-    }
-    await api("/downloads", {
-      method: "POST",
-      body: JSON.stringify({ url: downloadUrl })
-    });
+    if (!downloadUrl) return;
+    await api("/downloads", { method: "POST", body: JSON.stringify({ url: downloadUrl }) });
     setDownloadUrl("");
     await refresh();
+  }
+
+  async function runScript(command: string) {
+    const result = await api<{ stdout: string; stderr: string; error?: string }>("/scripts/run", {
+      method: "POST",
+      body: JSON.stringify({ command })
+    });
+    setLogs([result.stdout, result.stderr, result.error].filter(Boolean).join("\n"));
   }
 
   async function scanMedia() {
     await api("/media/scan", { method: "POST" });
     await refresh();
-  }
-
-  async function runScript(command: string) {
-    const result = await api<{ ok: boolean; stdout: string; stderr: string; error?: string }>("/scripts/run", {
-      method: "POST",
-      body: JSON.stringify({ command })
-    });
-    setLogs([result.stdout, result.stderr, result.error].filter(Boolean).join("\n"));
-    setActiveTab("scripts");
   }
 
   async function logout() {
@@ -258,315 +221,267 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
   }
 
   return (
-    <div className="app-shell">
+    <div className="dashboard-shell">
       <aside className="sidebar">
-        <div>
-          <p className="eyebrow">CloudOS</p>
-          <h1>Control Panel</h1>
-          <p className="muted">Signed in as {user.username}</p>
+        <div className="brand-box">
+          <div className="brand-mark">C</div>
+          <div>
+            <strong>CloudOS</strong>
+            <p>Master control panel</p>
+          </div>
         </div>
-        <nav>
-          {navItems.map((item) => (
-            <button
-              key={item.id}
-              className={item.id === activeTab ? "nav-item active" : "nav-item"}
-              onClick={() => setActiveTab(item.id)}
-            >
-              {item.label}
+        <div className="profile-card">
+          <div className="avatar">{user.username.slice(0, 1).toUpperCase()}</div>
+          <div>
+            <strong>{user.username}</strong>
+            <p>{user.role}</p>
+          </div>
+        </div>
+        <nav className="side-nav">
+          {navItems.map(([id, label]) => (
+            <button key={id} className={activeTab === id ? "side-link active" : "side-link"} onClick={() => setActiveTab(id)}>
+              {label}
             </button>
           ))}
         </nav>
-        <button className="logout" onClick={logout}>
-          Sign out
+        <button className="logout-button" onClick={logout}>
+          Log out
         </button>
       </aside>
-      <main className="content">
-        <header className="hero">
+
+      <main className="main-panel">
+        <header className="topbar">
           <div>
             <p className="eyebrow">Master Layer</p>
-            <h2>Private infrastructure cockpit for your VM, VPN, files, automation, and media stack.</h2>
+            <h1>Private infrastructure cockpit</h1>
+            <p className="subcopy">A lighter control room inspired by analytics dashboards and smart-home panels.</p>
           </div>
-          <div className="hero-stats">
-            <div className="pill">CPU {overview?.stats.cpuPercent ?? 0}%</div>
-            <div className="pill">RAM {overview ? `${overview.stats.memoryUsedMb}/${overview.stats.memoryTotalMb} MB` : "..."}</div>
-            <div className="pill">Host {overview?.stats.host ?? "..."}</div>
-          </div>
+          {overview ? (
+            <div className="chip-row">
+              <div className="metric-chip">CPU {overview.stats.cpuPercent}%</div>
+              <div className="metric-chip">RAM {overview.stats.memoryUsedMb}/{overview.stats.memoryTotalMb} MB</div>
+              <div className="metric-chip">Host {overview.stats.host}</div>
+            </div>
+          ) : null}
         </header>
 
-        {statusMessage ? <section className="message">{statusMessage}</section> : null}
+        <section className="headline-grid">
+          {headlineCards.map(([title, value, tone]) => (
+            <div key={title} className={`headline-card ${tone}`}>
+              <span>{title}</span>
+              <strong>{value}</strong>
+            </div>
+          ))}
+        </section>
 
         {activeTab === "overview" && overview ? (
-          <section className="grid two">
-            <Card title="System Stats">
-              <Metric label="CPU Usage" value={`${overview.stats.cpuPercent}%`} />
-              <Metric label="Memory" value={`${overview.stats.memoryUsedMb} / ${overview.stats.memoryTotalMb} MB`} />
-              <Metric label="Load Avg" value={overview.stats.loadAverage.map((value) => value.toFixed(2)).join(" / ")} />
-              <Metric label="Uptime" value={`${Math.floor(overview.stats.uptimeSeconds / 3600)}h`} />
-            </Card>
-            <Card title="Platform">
-              <Metric label="Host" value={overview.stats.host} />
-              <Metric label="Platform" value={overview.stats.platform} />
-              <Metric label="Services" value={`${overview.counters.servicesOnline}/${overview.counters.services}`} />
-              <Metric label="Alerts" value={String(overview.counters.alerts)} />
-            </Card>
-            <Card title="Quick Actions">
+          <section className="content-grid">
+            <Panel title="System Health">
+              <Row label="Uptime" value={`${Math.floor(overview.stats.uptimeSeconds / 3600)}h`} />
+              <Row label="Services" value={`${overview.counters.servicesOnline}/${overview.counters.services}`} />
+              <Row label="Devices" value={`${overview.counters.devices}`} />
+              <Row label="Alerts" value={`${overview.counters.alerts}`} />
+            </Panel>
+            <Panel title="Quick Actions">
               <div className="button-row">
-                <button onClick={() => serviceAction("n8n", "restart")}>Restart n8n</button>
                 <button onClick={() => serviceAction("nginx-proxy-manager", "restart")}>Restart Proxy</button>
-                <button onClick={() => runScript("bash scripts/post-install-check.sh")}>Run Health Check</button>
+                <button onClick={() => serviceAction("n8n", "restart")}>Restart n8n</button>
+                <button onClick={() => showLogs("dozzle")}>Read Logs</button>
               </div>
-            </Card>
-            <Card title="Recent Activity">
-              <Timeline items={overview.recentAudit.map((event) => `${event.type}: ${event.message}`)} />
-            </Card>
+            </Panel>
+            <Panel title="Recent Activity" wide>
+              <div className="card-grid">
+                {overview.recentAudit.map((item) => (
+                  <div key={item.id} className="mini-surface">
+                    <strong>{item.type}</strong>
+                    <p>{item.message}</p>
+                  </div>
+                ))}
+              </div>
+            </Panel>
+            <Panel title="Bandwidth">
+              {(analytics?.bandwidthByDevice ?? []).map((item) => (
+                <Bar key={item.name} label={item.name} value={item.usageMb} />
+              ))}
+            </Panel>
           </section>
         ) : null}
 
         {activeTab === "services" ? (
-          <section className="grid two">
-            <Card title="Service Status">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Status</th>
-                    <th>Port</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {services.map((service) => (
-                    <tr key={service.id}>
-                      <td>
+          <section className="content-grid">
+            <Panel title="Service Grid" wide>
+              <div className="card-grid">
+                {services.map((service) => (
+                  <div key={service.id} className="service-card">
+                    <div className="service-top">
+                      <div>
                         <strong>{service.name}</strong>
-                        <div className="muted">{service.description}</div>
-                      </td>
-                      <td>{service.runtimeStatus}</td>
-                      <td>{service.port ?? "-"}</td>
-                      <td className="button-row">
-                        {service.actions.includes("restart") ? <button onClick={() => serviceAction(service.id, "restart")}>Restart</button> : null}
-                        <button onClick={() => showLogs(service.id)}>Logs</button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </Card>
-            <Card title="Logs Viewer">
-              <pre className="log-viewer">{logs || "Select a service to load its logs."}</pre>
-            </Card>
+                        <p>{service.description}</p>
+                      </div>
+                      <span className={`badge ${service.runtimeStatus === "running" ? "good" : "neutral"}`}>{service.runtimeStatus}</span>
+                    </div>
+                    <small>{service.category} {service.port ? `· :${service.port}` : ""}</small>
+                    <div className="button-row">
+                      {service.actions.includes("restart") ? <button onClick={() => serviceAction(service.id, "restart")}>Restart</button> : null}
+                      <button onClick={() => showLogs(service.id)}>Logs</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Panel>
+            <Panel title="Logs">
+              <pre className="log-screen">{logs || "Select a service to inspect logs."}</pre>
+            </Panel>
           </section>
         ) : null}
 
         {activeTab === "vpn" ? (
-          <section className="grid two">
-            <Card title="Device Management">
-              {devices.map((device) => (
-                <div key={device.id} className="list-row">
-                  <div>
-                    <strong>{device.name}</strong>
-                    <div className="muted">
-                      {device.ipAddress} • {device.status}
+          <section className="content-grid">
+            <Panel title="Devices" wide>
+              <div className="list-grid">
+                {devices.map((device) => (
+                  <div key={device.id} className="list-row">
+                    <div>
+                      <strong>{device.name}</strong>
+                      <p>{device.ipAddress}</p>
                     </div>
-                  </div>
-                  <div className="button-row">
+                    <span className={`badge ${device.status === "blocked" ? "bad" : "good"}`}>{device.status}</span>
                     <span>{device.usageMb} MB</span>
-                    <span>{device.killSwitchEnabled ? "Kill switch on" : "Kill switch off"}</span>
                     <button onClick={() => toggleDevice(device.id)}>{device.status === "blocked" ? "Enable" : "Disable"}</button>
                   </div>
-                </div>
+                ))}
+              </div>
+            </Panel>
+            <Panel title="Policy">
+              {devices.map((device) => (
+                <Row key={device.id} label={device.name} value={device.killSwitchEnabled ? "Kill switch on" : "Kill switch off"} />
               ))}
-            </Card>
-            <Card title="VPN Notes">
-              <p className="muted">This panel tracks devices and policy state. WireGuard networking remains on your separate VPN VM.</p>
-              <Timeline items={devices.map((device) => `${device.name} last seen ${new Date(device.lastSeenAt).toLocaleString()}`)} />
-            </Card>
+            </Panel>
           </section>
         ) : null}
 
         {activeTab === "files" ? (
-          <section className="grid two">
-            <Card title={`File Browser: ${files?.currentPath ?? ""}`}>
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Type</th>
-                    <th>Size</th>
-                    <th>Updated</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {files?.entries.map((entry) => (
-                    <tr key={entry.path}>
-                      <td>{entry.name}</td>
-                      <td>{entry.type}</td>
-                      <td>{entry.size}</td>
-                      <td>{new Date(entry.updatedAt).toLocaleString()}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </Card>
-            <Card title="Smart File System">
-              <p className="muted">Upload endpoints, file tags, auto-organization folders, and share-link support are already exposed by the API.</p>
-              <p className="muted">Next operational step on the VM is mounting real storage under the configured files, downloads, and media directories.</p>
-            </Card>
+          <section className="content-grid">
+            <Panel title={`Files · ${files?.currentPath ?? ""}`} wide>
+              <div className="list-grid">
+                {files?.entries.map((entry) => (
+                  <div key={entry.path} className="list-row">
+                    <div><strong>{entry.name}</strong><p>{entry.path}</p></div>
+                    <span>{entry.type}</span>
+                    <span>{entry.size} B</span>
+                  </div>
+                ))}
+              </div>
+            </Panel>
           </section>
         ) : null}
 
         {activeTab === "downloads" ? (
-          <section className="grid two">
-            <Card title="Auto Download Engine">
+          <section className="content-grid">
+            <Panel title="Queue Download">
               <form className="stack" onSubmit={createDownload}>
-                <input value={downloadUrl} onChange={(event) => setDownloadUrl(event.target.value)} placeholder="https://example.com/file.iso" />
-                <button type="submit">Queue Download</button>
+                <input value={downloadUrl} onChange={(event) => setDownloadUrl(event.target.value)} placeholder="https://example.com/archive.zip" />
+                <button type="submit">Queue</button>
               </form>
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>URL</th>
-                    <th>Status</th>
-                    <th>Progress</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {downloads.map((download) => (
-                    <tr key={download.id}>
-                      <td className="truncate">{download.url}</td>
-                      <td>{download.status}</td>
-                      <td>{download.progress}%</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </Card>
-            <Card title="Download Diagnostics">
-              <Timeline items={downloads.map((download) => `${download.status}: ${download.targetPath}`)} />
-            </Card>
+            </Panel>
+            <Panel title="Jobs" wide>
+              <div className="list-grid">
+                {downloads.map((download) => (
+                  <div key={download.id} className="list-row">
+                    <div><strong>{download.status}</strong><p>{download.url}</p></div>
+                    <span>{download.progress}%</span>
+                    <span>{download.targetPath}</span>
+                  </div>
+                ))}
+              </div>
+            </Panel>
           </section>
         ) : null}
 
         {activeTab === "media" ? (
-          <section className="grid two">
-            <Card title="Media Server">
-              <div className="button-row">
-                <button onClick={scanMedia}>Rescan Library</button>
-              </div>
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Title</th>
-                    <th>Type</th>
-                    <th>Subtitles</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {media.map((item) => (
-                    <tr key={item.id}>
-                      <td>{item.title}</td>
-                      <td>{item.type}</td>
-                      <td>{item.subtitleCount}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </Card>
-            <Card title="Streaming Notes">
-              <p className="muted">This codebase scans, catalogs, and exposes media metadata. Plug in Jellyfin or another streamer later and route it through the same panel.</p>
-            </Card>
+          <section className="content-grid">
+            <Panel title="Library">
+              <div className="button-row"><button onClick={scanMedia}>Rescan</button></div>
+              {media.map((item) => <Row key={item.id} label={item.title} value={`${item.type} · ${item.subtitleCount} subtitles`} />)}
+            </Panel>
           </section>
         ) : null}
 
         {activeTab === "automation" ? (
-          <section className="grid two">
-            <Card title="Automation Engine">
-              <Timeline items={workflows.map((workflow) => `${workflow.name}: ${workflow.action}`)} />
-            </Card>
-            <Card title="Smart Rules">
-              <Timeline items={rules.map((rule) => `${rule.name}: ${rule.action}`)} />
-            </Card>
+          <section className="content-grid">
+            <Panel title="Workflows">{workflows.map((item) => <Row key={item.id} label={item.name} value={item.trigger ?? item.action} />)}</Panel>
+            <Panel title="Rules">{rules.map((item) => <Row key={item.id} label={item.name} value={item.condition ?? item.action} />)}</Panel>
           </section>
         ) : null}
 
         {activeTab === "notifications" ? (
-          <section className="grid two">
-            <Card title="Notification Targets">
-              <Timeline items={notifications.map((target) => `${target.name} (${target.type}) -> ${target.endpoint}`)} />
-            </Card>
-            <Card title="Events">
-              <p className="muted">Telegram and webhook targets are supported by the API. Test-send is available through the backend endpoint.</p>
-            </Card>
+          <section className="content-grid">
+            <Panel title="Targets">{notifications.map((item) => <Row key={item.id} label={item.name} value={`${item.type} · ${item.endpoint}`} />)}</Panel>
           </section>
         ) : null}
 
         {activeTab === "analytics" && analytics ? (
-          <section className="grid two">
-            <Card title="Bandwidth Tracking">
-              {analytics.bandwidthByDevice.map((item) => (
-                <Bar key={item.name} label={item.name} value={item.usageMb} unit="MB" />
-              ))}
-            </Card>
-            <Card title="Download Stats">
-              {analytics.downloadsByStatus.map((item) => (
-                <Metric key={item.status} label={item.status} value={String(item.count)} />
-              ))}
-            </Card>
-            <Card title="Activity Logs">
-              <Timeline items={analytics.auditTimeline.map((item) => `${item.actor}: ${item.message}`)} />
-            </Card>
+          <section className="content-grid">
+            <Panel title="Usage Chart" wide>
+              <div className="chart-grid">
+                {analytics.bandwidthByDevice.map((item, index) => (
+                  <div key={item.name} className="chart-col">
+                    <div className={`chart-bar tone-${index % 4}`} style={{ height: `${Math.max(28, Math.min(180, item.usageMb / 15))}px` }} />
+                    <strong>{item.name}</strong>
+                  </div>
+                ))}
+              </div>
+            </Panel>
+            <Panel title="Download States">{analytics.downloadsByStatus.map((item) => <Row key={item.status} label={item.status} value={`${item.count}`} />)}</Panel>
+            <Panel title="Audit">{analytics.auditTimeline.map((item) => <Row key={item.id} label={item.actor} value={item.message} />)}</Panel>
           </section>
         ) : null}
 
         {activeTab === "security" ? (
-          <section className="grid two">
-            <Card title="Network Monitor">
-              <Timeline items={networkEvents.map((event) => `${event.severity.toUpperCase()} ${event.source}: ${event.message}`)} />
-            </Card>
-            <Card title="Security Systems">
-              <Metric label="Ad Blocker" value="Adapter ready" />
-              <Metric label="Antivirus" value="Adapter ready" />
-              <Metric label="DNS Filtering" value="Adapter ready" />
-              <p className="muted">The backend exposes these panels now and leaves the actual engine hookup open for Pi-hole, AdGuard, ClamAV, or your preferred tools.</p>
-            </Card>
+          <section className="content-grid">
+            <Panel title="Network Events" wide>
+              <div className="card-grid">
+                {networkEvents.map((item) => (
+                  <div key={item.id} className="mini-surface">
+                    <strong>{item.source}</strong>
+                    <p>{item.message}</p>
+                    <span className={`badge ${item.severity === "error" ? "bad" : item.severity === "warn" ? "warn" : "good"}`}>{item.severity}</span>
+                  </div>
+                ))}
+              </div>
+            </Panel>
           </section>
         ) : null}
 
         {activeTab === "sharing" ? (
-          <section className="grid two">
-            <Card title="File Sharing">
-              <Timeline items={shareLinks.map((item) => `${item.path} ${item.expiresAt ? `expires ${item.expiresAt}` : "no expiry"}`)} />
-            </Card>
-            <Card title="Access Controls">
-              <p className="muted">Share-link creation, password protection, and expiry timestamps are supported in the API state model.</p>
-            </Card>
+          <section className="content-grid">
+            <Panel title="Share Links">{shareLinks.map((item) => <Row key={item.id} label={item.path} value={item.expiresAt ?? "No expiry"} />)}</Panel>
           </section>
         ) : null}
 
         {activeTab === "scripts" ? (
-          <section className="grid two">
-            <Card title="Script & Tool Runner">
-              {scripts.map((script) => (
-                <div key={script.id} className="list-row">
-                  <div>
+          <section className="content-grid">
+            <Panel title="Scripts">
+              <div className="card-grid">
+                {scripts.map((script) => (
+                  <div key={script.id} className="service-card">
                     <strong>{script.name}</strong>
-                    <div className="muted">{script.description}</div>
+                    <p>{script.description}</p>
+                    <small>{script.command}</small>
+                    <div className="button-row"><button onClick={() => runScript(script.command)}>Run</button></div>
                   </div>
-                  <button onClick={() => runScript(script.command)}>Run</button>
-                </div>
-              ))}
-            </Card>
-            <Card title="Runner Output">
-              <pre className="log-viewer">{logs || "Run a script to inspect output."}</pre>
-            </Card>
+                ))}
+              </div>
+            </Panel>
+            <Panel title="Output">
+              <pre className="log-screen">{logs || "Run a command to inspect output."}</pre>
+            </Panel>
           </section>
         ) : null}
 
         {activeTab === "games" ? (
-          <section className="grid two">
-            <Card title="Game Server Manager">
-              <p className="muted">Optional module stubbed into the control panel so game servers can be added as managed services later.</p>
-            </Card>
+          <section className="content-grid">
+            <Panel title="Game Servers"><p className="subcopy">Optional module ready for future orchestration.</p></Panel>
           </section>
         ) : null}
       </main>
@@ -574,55 +489,20 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
   );
 }
 
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="card">
-      <div className="card-header">
-        <h3>{title}</h3>
-      </div>
-      <div className="card-body">{children}</div>
-    </section>
-  );
+function Panel({ title, children, wide }: { title: string; children: React.ReactNode; wide?: boolean }) {
+  return <section className={wide ? "panel wide" : "panel"}><div className="panel-head"><h2>{title}</h2></div><div className="panel-body">{children}</div></section>;
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="metric">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
+function Row({ label, value }: { label: string; value: string }) {
+  return <div className="info-row"><span>{label}</span><strong>{value}</strong></div>;
 }
 
-function Timeline({ items }: { items: string[] }) {
-  if (!items.length) {
-    return <p className="muted">No entries yet.</p>;
-  }
-
-  return (
-    <div className="timeline">
-      {items.map((item) => (
-        <div key={item} className="timeline-item">
-          {item}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function Bar({ label, value, unit }: { label: string; value: number; unit: string }) {
-  const width = Math.max(8, Math.min(100, Math.round((value / 5000) * 100)));
+function Bar({ label, value }: { label: string; value: number }) {
+  const width = Math.max(10, Math.min(100, Math.round((value / 5000) * 100)));
   return (
     <div className="bar-row">
-      <div className="bar-label">
-        <span>{label}</span>
-        <strong>
-          {value} {unit}
-        </strong>
-      </div>
-      <div className="bar-track">
-        <div className="bar-fill" style={{ width: `${width}%` }} />
-      </div>
+      <div className="bar-head"><span>{label}</span><strong>{value} MB</strong></div>
+      <div className="bar-track"><div className="bar-fill" style={{ width: `${width}%` }} /></div>
     </div>
   );
 }
@@ -632,15 +512,10 @@ export function App() {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    api<{ user: User }>("/auth/session")
-      .then((result) => setUser(result.user))
-      .catch(() => undefined)
-      .finally(() => setReady(true));
+    api<{ user: User }>("/auth/session").then((result) => setUser(result.user)).catch(() => undefined).finally(() => setReady(true));
   }, []);
 
-  if (!ready) {
-    return <div className="loading">Loading CloudOS...</div>;
-  }
+  if (!ready) return <div className="loading-state">Loading CloudOS...</div>;
 
   return (
     <Routes>
