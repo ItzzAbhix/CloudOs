@@ -1,73 +1,84 @@
-# CloudOS VM Bootstrap
+# CloudOS
 
-This repository bootstraps the first layer of the CloudOS stack on a fresh Ubuntu VM.
+CloudOS is a self-hosted master control panel for your private VM stack. This repository includes both the infrastructure bootstrap and the dashboard codebase.
 
-Current scope:
+## Repo layout
 
-- Create a hardened base VM user and SSH setup
-- Install Docker Engine and the Compose plugin
-- Configure a minimal firewall policy
-- Prepare persistent directories under `/opt/cloudos`
-- Start the base infrastructure services:
-  - Nginx Proxy Manager
-  - Portainer
-  - n8n
-  - Dozzle
+- `apps/api`: authenticated control-plane API
+- `apps/web`: React dashboard UI
+- `infra/docker-compose.yml`: runtime stack for the dashboard, proxy, Portainer, n8n, and Dozzle
+- `infra/cloud-init.yaml`: optional first-boot provisioning
+- `scripts/bootstrap-vm.sh`: VM bootstrap and deployment
+- `scripts/post-install-check.sh`: service verification
 
-This is the foundation for the larger control panel system. Application services such as VPN, media, downloads, ad blocking, and file workflows can be added on top of this stack in later phases.
+## Included control surfaces
 
-## Files
+- system stats
+- service status and restart actions
+- logs viewer
+- login and session protection
+- VPN device management model
+- file browser and tagging endpoints
+- download queue engine
+- media library scanning
+- automation workflows and smart rules
+- notifications
+- analytics
+- security and network monitoring adapters
+- share links
+- script runner
+- game server manager stub
 
-- [infra/cloud-init.yaml](C:\CloudOs\infra\cloud-init.yaml): optional first-boot provisioning for a new Ubuntu VM
-- [infra/docker-compose.yml](C:\CloudOs\infra\docker-compose.yml): base Docker stack
-- [scripts/bootstrap-vm.sh](C:\CloudOs\scripts\bootstrap-vm.sh): idempotent VM setup script
-- [scripts/post-install-check.sh](C:\CloudOs\scripts\post-install-check.sh): basic health checks after deployment
-- [\.env.example](C:\CloudOs\.env.example): environment variables for the Docker stack
-
-## Recommended Host
+## Recommended GCP VM
 
 - Ubuntu Server 24.04 LTS
-- 2 vCPU minimum
-- 4 GB RAM minimum
-- 40 GB disk minimum
+- `e2-standard-2`
+- 30-40 GB `pd-balanced`
 
-## Ports
+## Default ports
 
-Open only what you need:
+- `22` SSH
+- `80` HTTP
+- `81` Nginx Proxy Manager admin
+- `443` HTTPS
+- `4000` CloudOS API
+- `5678` n8n
+- `8088` CloudOS web dashboard
+- `9000` Portainer
+- `9999` Dozzle
 
-- `22/tcp` for SSH
-- `80/tcp` for HTTP
-- `81/tcp` for Nginx Proxy Manager admin
-- `443/tcp` for HTTPS
-- `9000/tcp` for Portainer
-- `5678/tcp` for n8n
-- `9999/tcp` for Dozzle
+Use VPN-only firewall rules for admin access when you lock this down.
 
-In production, prefer exposing only `80` and `443` publicly and routing the other services through the reverse proxy or a VPN.
+## Local development
 
-## Quick Start
+```bash
+npm install
+npm run dev:api
+npm run dev:web
+```
 
-1. Copy [\.env.example](C:\CloudOs\.env.example) to `.env` and set strong secrets.
-2. Provision the VM with [infra/cloud-init.yaml](C:\CloudOs\infra\cloud-init.yaml) or run [scripts/bootstrap-vm.sh](C:\CloudOs\scripts\bootstrap-vm.sh) manually on the server.
+Default login:
+
+- username: `admin`
+- password: `cloudosadmin`
+
+Change that immediately before any real deployment.
+
+## VM deployment
+
+1. Copy `.env.example` to `.env` and replace the placeholder secrets.
+2. Clone the repo on the VM.
 3. Run:
 
 ```bash
-cd /opt/cloudos
-docker compose --env-file .env -f docker-compose.yml up -d
+sudo chmod +x scripts/bootstrap-vm.sh scripts/post-install-check.sh
+sudo ./scripts/bootstrap-vm.sh
 ```
 
-4. Verify with:
+4. Verify:
 
 ```bash
-/opt/cloudos/scripts/post-install-check.sh
+sudo /opt/cloudos/scripts/post-install-check.sh
 ```
 
-## Phase 1 Outcome
-
-After this setup, the VM will be ready to host:
-
-- the reverse proxy entry point
-- container orchestration and logs
-- the first automation workflows
-
-The next step after VM setup is to add the actual CloudOS dashboard service and wire it through the proxy.
+The dashboard stack will run alongside Nginx Proxy Manager, Portainer, n8n, and Dozzle under Docker.

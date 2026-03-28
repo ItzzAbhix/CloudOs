@@ -1,0 +1,16 @@
+{
+  "name": "cloudos",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/api",
+    "apps/web"
+  ],
+  "scripts": {
+    "build": "npm run build -w @cloudos/api && npm run build -w @cloudos/web",
+    "dev": "npm run dev -w @cloudos/api",
+    "dev:api": "npm run dev -w @cloudos/api",
+    "dev:web": "npm run dev -w @cloudos/web",
+    "lint": "npm run lint -w @cloudos/api && npm run lint -w @cloudos/web"
+  }
+}

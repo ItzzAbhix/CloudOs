@@ -1,4 +1,40 @@
 services:
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: cloudos-api
+    restart: unless-stopped
+    ports:
+      - "${CLOUDOS_API_PORT:-4000}:4000"
+    environment:
+      PORT: 4000
+      CLOUDOS_CORS_ORIGIN: ${CLOUDOS_CORS_ORIGIN}
+      CLOUDOS_JWT_SECRET: ${CLOUDOS_JWT_SECRET}
+      CLOUDOS_DATA_ROOT: /app/data
+      CLOUDOS_STORAGE_ROOT: /app/data/storage
+      CLOUDOS_FILES_ROOT: /app/data/storage/files
+      CLOUDOS_DOWNLOADS_ROOT: /app/data/storage/downloads
+      CLOUDOS_MEDIA_ROOT: /app/data/storage/media
+    volumes:
+      - /opt/cloudos/data/cloudos:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - cloudos
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    container_name: cloudos-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "${CLOUDOS_WEB_PORT:-8088}:80"
+    networks:
+      - cloudos
+
   nginx-proxy-manager:
     image: jc21/nginx-proxy-manager:2
     container_name: nginx-proxy-manager
