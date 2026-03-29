@@ -188,6 +188,38 @@ input {
   grid-template-columns: repeat(12, 1fr);
   gap: 1rem;
 }
+.vpn-hero-grid {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr;
+  gap: 1rem;
+}
+.vpn-splash {
+  min-height: 230px;
+  border-radius: 24px;
+  padding: 1.4rem;
+  color: #fff;
+}
+.vpn-splash strong {
+  display: block;
+  font-size: 2.2rem;
+  margin-top: 0.7rem;
+}
+.vpn-splash p {
+  max-width: 34rem;
+  color: rgba(255, 255, 255, 0.82);
+}
+.vpn-mini-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.9rem;
+  margin-top: 1.2rem;
+}
+.vpn-summary-card {
+  border-radius: 24px;
+  padding: 1.2rem;
+  background: linear-gradient(180deg, #ffffff, #f7f9fe);
+  border: 1px solid var(--line);
+}
 .panel {
   grid-column: span 6;
   border-radius: 28px;
@@ -215,6 +247,16 @@ input {
   padding: 1rem;
   border: 1px solid var(--line);
   background: linear-gradient(180deg, #fff, #f8faff);
+}
+.darkish {
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.18);
+  color: #fff;
+}
+.darkish strong {
+  display: block;
+  margin-top: 0.5rem;
+  font-size: 1.4rem;
 }
 .service-top, .info-row, .list-row, .bar-head {
   display: flex;
@@ -282,6 +324,7 @@ input {
   overflow: auto;
   white-space: pre-wrap;
 }
+.log-screen.slim { min-height: 180px; }
 
 @media (max-width: 1180px) {
   .headline-grid { grid-template-columns: repeat(2, 1fr); }
@@ -289,6 +332,7 @@ input {
 @media (max-width: 1080px) {
   .dashboard-shell, .login-panel { grid-template-columns: 1fr; }
   .content-grid { grid-template-columns: 1fr; }
+  .vpn-hero-grid, .vpn-mini-grid { grid-template-columns: 1fr; }
   .panel, .panel.wide { grid-column: span 1; }
   .topbar { flex-direction: column; }
 }

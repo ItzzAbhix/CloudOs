@@ -7,6 +7,7 @@ import { authMiddleware, createSessionToken, login } from "./auth.js";
 import { config } from "./config.js";
 import { appendAudit, enqueueDownload, getOverview, getServiceLogs, getServices, listFiles, runServiceAction, scanMediaLibrary } from "./system.js";
 import { stateStore } from "./store.js";
+import { createVpnPeer, getVpnBackups, getVpnDashboard, getVpnSystemInfo, performVpnInterfaceAction, saveVpnConfig, saveVpnSettings } from "./vpn.js";
 import type { AuthenticatedRequest } from "./auth.js";
 
 const loginSchema = z.object({
@@ -66,6 +67,26 @@ const tagSchema = z.object({
   path: z.string().min(1),
   tags: z.array(z.string()),
   notes: z.string().optional()
+});
+
+const vpnSettingsSchema = z.object({
+  endpoint: z.string(),
+  dns: z.string(),
+  allowedIps: z.string(),
+  refreshSeconds: z.number().int().min(5)
+});
+
+const vpnPeerSchema = z.object({
+  name: z.string().min(1),
+  address: z.string().min(1),
+  dns: z.string().min(1),
+  allowedIps: z.string().min(1),
+  endpoint: z.string().min(1),
+  keepalive: z.string().min(1)
+});
+
+const vpnConfigSchema = z.object({
+  configText: z.string().min(1)
 });
 
 const upload = multer({ dest: config.filesRoot });
@@ -147,6 +168,71 @@ router.get("/services/:id/logs", async (req, res) => {
   }
 
   res.json({ logs: await getServiceLogs(service) });
+});
+
+router.get("/vpn/dashboard", async (_req, res) => {
+  res.json({
+    ...(await getVpnDashboard()),
+    system: getVpnSystemInfo(),
+    backups: getVpnBackups()
+  });
+});
+
+router.post("/vpn/interface/:action", async (req, res) => {
+  const action = req.params.action;
+  if (action !== "start" && action !== "stop" && action !== "restart" && action !== "reload") {
+    res.status(404).json({ error: "Invalid action" });
+    return;
+  }
+
+  try {
+    await performVpnInterfaceAction(action);
+    appendAudit("vpn.interface", `Performed ${action} on ${config.vpnInterface}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "VPN action failed" });
+  }
+});
+
+router.post("/vpn/settings", (req, res) => {
+  const parsed = vpnSettingsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  saveVpnSettings(parsed.data);
+  appendAudit("vpn.settings", "Updated VPN dashboard defaults", "admin");
+  res.status(204).end();
+});
+
+router.post("/vpn/peers", (req, res) => {
+  const parsed = vpnPeerSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  try {
+    const generated = createVpnPeer(parsed.data);
+    appendAudit("vpn.peer.create", `Created VPN peer ${generated.name}`, "admin");
+    res.status(201).json(generated);
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to create VPN peer" });
+  }
+});
+
+router.post("/vpn/config", (req, res) => {
+  const parsed = vpnConfigSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  try {
+    saveVpnConfig(parsed.data.configText);
+    appendAudit("vpn.config.save", "Saved VPN config", "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to save VPN config" });
+  }
 });
 
 router.get("/devices", (_req, res) => {

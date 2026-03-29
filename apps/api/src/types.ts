@@ -130,6 +130,76 @@ export interface AuditEvent {
   createdAt: string;
 }
 
+export interface VpnPeerRecord {
+  peerId: string;
+  name: string;
+  publicKey: string;
+  publicKeyShort: string;
+  endpoint: string;
+  allowedIps: string;
+  keepalive: string;
+  rxHuman: string;
+  txHuman: string;
+  handshakeAgo: string;
+  online: boolean;
+  disabled: boolean;
+  blockedUntil?: number;
+  blockedUntilHuman?: string;
+}
+
+export interface VpnDashboardData {
+  interface: {
+    name: string;
+    up: boolean;
+    publicKey: string;
+    publicKeyShort: string;
+    listenPort: string;
+    addresses: string;
+    endpointHint: string;
+    configAccessible: boolean;
+  };
+  stats: {
+    totalPeers: number;
+    onlinePeers: number;
+    totalRx: string;
+    totalTx: string;
+    latestHandshake: string;
+    nextIp: string;
+    pool: string;
+    disabledPeers: number;
+  };
+  defaults: {
+    dns: string;
+    allowedIps: string;
+    refreshSeconds: number;
+  };
+  peers: VpnPeerRecord[];
+  generatedPeer: {
+    name: string;
+    address: string;
+    publicKey: string;
+    peerId: string;
+    clientConfig: string;
+  } | null;
+  generatedConfigs: Array<{
+    name: string;
+    address: string;
+    publicKey: string;
+    peerId: string;
+    clientConfig: string;
+  }>;
+  analytics: Array<{
+    timestamp: number;
+    onlinePeers: number;
+    rxBytes: number;
+    txBytes: number;
+  }>;
+  configText: string;
+  configPath: string;
+  generatedAt: string;
+  error?: string;
+}
+
 export interface AppState {
   users: UserRecord[];
   services: ServiceRecord[];

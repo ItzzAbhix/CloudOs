@@ -20,5 +20,13 @@ export const config = {
   scriptsRoot: process.env.CLOUDOS_SCRIPTS_ROOT ?? path.join(repoRoot, "scripts"),
   jwtSecret: process.env.CLOUDOS_JWT_SECRET ?? "cloudos-dev-secret",
   cookieName: process.env.CLOUDOS_COOKIE_NAME ?? "cloudos_session",
-  corsOrigin: process.env.CLOUDOS_CORS_ORIGIN ?? "http://localhost:4173"
+  corsOrigin: process.env.CLOUDOS_CORS_ORIGIN ?? "http://localhost:4173",
+  vpnStateFile: process.env.CLOUDOS_VPN_STATE_FILE ?? path.join(repoRoot, "data", "cloudos-vpn-state.json"),
+  vpnInterface: process.env.WG_INTERFACE ?? "wg0",
+  vpnConfigPath: process.env.WG_CONFIG_PATH ?? `/etc/wireguard/${process.env.WG_INTERFACE ?? "wg0"}.conf`,
+  vpnDefaultDns: process.env.WG_DEFAULT_DNS ?? "1.1.1.1, 1.0.0.1",
+  vpnDefaultAllowedIps: process.env.WG_DEFAULT_ALLOWED_IPS ?? "0.0.0.0/0",
+  vpnServerEndpoint: process.env.WG_SERVER_ENDPOINT ?? "",
+  vpnRefreshSeconds: Number(process.env.WG_REFRESH_SECONDS ?? 10),
+  vpnUseSudo: process.env.WG_USE_SUDO === "1"
 };

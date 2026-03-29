@@ -19,6 +19,17 @@ type Analytics = {
   downloadsByStatus: Array<{ status: string; count: number }>;
   auditTimeline: Array<{ id: string; message: string; actor: string }>;
 };
+type VpnDashboard = {
+  interface: { name: string; up: boolean; publicKeyShort: string; listenPort: string; addresses: string; endpointHint: string };
+  stats: { totalPeers: number; onlinePeers: number; totalRx: string; totalTx: string; latestHandshake: string; nextIp: string; pool: string; disabledPeers: number };
+  defaults: { dns: string; allowedIps: string; refreshSeconds: number };
+  peers: Array<{ peerId: string; name: string; endpoint: string; allowedIps: string; handshakeAgo: string; rxHuman: string; txHuman: string; online: boolean; disabled: boolean }>;
+  generatedPeer: null | { name: string; address: string; publicKey: string; clientConfig: string };
+  generatedConfigs: Array<{ name: string; address: string; publicKey: string }>;
+  configText: string;
+  configPath: string;
+  generatedAt: string;
+};
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api${path}`, {
@@ -109,6 +120,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [rules, setRules] = useState<Workflow[]>([]);
   const [notifications, setNotifications] = useState<NotificationTarget[]>([]);
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
+  const [vpn, setVpn] = useState<VpnDashboard | null>(null);
   const [networkEvents, setNetworkEvents] = useState<Array<{ id: string; source: string; message: string; severity: string }>>([]);
   const [shareLinks, setShareLinks] = useState<Array<{ id: string; path: string; expiresAt?: string }>>([]);
   const [scripts, setScripts] = useState<Array<{ id: string; name: string; command: string; description: string }>>([]);
@@ -127,6 +139,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
       rulesResult,
       notificationsResult,
       analyticsResult,
+      vpnResult,
       networkResult,
       shareResult,
       scriptsResult
@@ -141,6 +154,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
       api<Workflow[]>("/automation/rules"),
       api<NotificationTarget[]>("/notifications"),
       api<Analytics>("/analytics"),
+      api<VpnDashboard>("/vpn/dashboard"),
       api<Array<{ id: string; source: string; message: string; severity: string }>>("/security/network"),
       api<Array<{ id: string; path: string; expiresAt?: string }>>("/sharing"),
       api<Array<{ id: string; name: string; command: string; description: string }>>("/scripts")
@@ -155,6 +169,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
     setRules(rulesResult);
     setNotifications(notificationsResult);
     setAnalytics(analyticsResult);
+    setVpn(vpnResult);
     setNetworkEvents(networkResult);
     setShareLinks(shareResult);
     setScripts(scriptsResult);
@@ -337,25 +352,77 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
 
         {activeTab === "vpn" ? (
           <section className="content-grid">
-            <Panel title="Devices" wide>
+            <Panel title="WireGuard Command Center" wide>
+              <section className="vpn-hero-grid">
+                <div className="vpn-splash lilac">
+                  <span>Network posture</span>
+                  <strong>{vpn ? `${vpn.stats.onlinePeers}/${vpn.stats.totalPeers}` : "0/0"} peers active</strong>
+                  <p>Provision clients, watch live handshakes, and keep VPN defaults inside CloudOS.</p>
+                  <div className="vpn-mini-grid">
+                    <div className="mini-surface darkish"><span>Rx</span><strong>{vpn?.stats.totalRx ?? "0 B"}</strong></div>
+                    <div className="mini-surface darkish"><span>Tx</span><strong>{vpn?.stats.totalTx ?? "0 B"}</strong></div>
+                    <div className="mini-surface darkish"><span>Pool</span><strong>{vpn?.stats.pool || "Unknown"}</strong></div>
+                  </div>
+                </div>
+                <div className="vpn-summary-card">
+                  <Row label="Interface" value={vpn?.interface.up ? "Up" : "Down"} />
+                  <Row label="Listen Port" value={vpn?.interface.listenPort || "N/A"} />
+                  <Row label="Address" value={vpn?.interface.addresses || "N/A"} />
+                  <Row label="Latest Handshake" value={vpn?.stats.latestHandshake || "Never"} />
+                  <Row label="Server Key" value={vpn?.interface.publicKeyShort || "Unavailable"} />
+                </div>
+              </section>
+            </Panel>
+            <Panel title="Peers" wide>
               <div className="list-grid">
-                {devices.map((device) => (
-                  <div key={device.id} className="list-row">
+                {(vpn?.peers.length ? vpn.peers : devices.map((device) => ({
+                  peerId: device.id,
+                  name: device.name,
+                  endpoint: device.ipAddress,
+                  allowedIps: device.ipAddress,
+                  handshakeAgo: new Date(device.lastSeenAt).toLocaleString(),
+                  rxHuman: `${device.usageMb} MB`,
+                  txHuman: device.killSwitchEnabled ? "Kill switch on" : "Kill switch off",
+                  online: device.status !== "blocked",
+                  disabled: device.status === "blocked"
+                })) ).map((device) => (
+                  <div key={device.peerId} className="list-row">
                     <div>
                       <strong>{device.name}</strong>
-                      <p>{device.ipAddress}</p>
+                      <p>{device.endpoint}</p>
                     </div>
-                    <span className={`badge ${device.status === "blocked" ? "bad" : "good"}`}>{device.status}</span>
-                    <span>{device.usageMb} MB</span>
-                    <button onClick={() => toggleDevice(device.id)}>{device.status === "blocked" ? "Enable" : "Disable"}</button>
+                    <span className={`badge ${device.disabled ? "bad" : device.online ? "good" : "neutral"}`}>{device.disabled ? "disabled" : device.online ? "online" : "idle"}</span>
+                    <span>{device.handshakeAgo}</span>
+                    <span>{device.rxHuman}</span>
+                    <span>{device.allowedIps}</span>
                   </div>
                 ))}
               </div>
             </Panel>
-            <Panel title="Policy">
-              {devices.map((device) => (
-                <Row key={device.id} label={device.name} value={device.killSwitchEnabled ? "Kill switch on" : "Kill switch off"} />
-              ))}
+            <Panel title="Defaults">
+              <Row label="Endpoint" value={vpn?.interface.endpointHint || "Unset"} />
+              <Row label="DNS" value={vpn?.defaults.dns || "Unset"} />
+              <Row label="Allowed IPs" value={vpn?.defaults.allowedIps || "Unset"} />
+              <Row label="Next Client IP" value={vpn?.stats.nextIp || "Manual"} />
+            </Panel>
+            <Panel title="Latest Generated Client">
+              {vpn?.generatedPeer ? (
+                <>
+                  <Row label="Name" value={vpn.generatedPeer.name} />
+                  <Row label="Address" value={vpn.generatedPeer.address} />
+                  <Row label="Public Key" value={vpn.generatedPeer.publicKey} />
+                  <pre className="log-screen slim">{vpn.generatedPeer.clientConfig}</pre>
+                </>
+              ) : (
+                <p className="subcopy">No generated client profile yet.</p>
+              )}
+            </Panel>
+            <Panel title="Config Editor" wide>
+              <div className="mini-surface">
+                <strong>{vpn?.configPath || "VPN config path unavailable"}</strong>
+                <p>Last sync {vpn?.generatedAt || "unknown"}</p>
+              </div>
+              <pre className="log-screen">{vpn?.configText || "WireGuard config not available from this host yet."}</pre>
             </Panel>
           </section>
         ) : null}
