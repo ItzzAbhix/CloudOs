@@ -193,6 +193,9 @@ input {
   grid-template-columns: 1.2fr 0.8fr;
   gap: 1rem;
 }
+.vpn-banner {
+  grid-column: 1 / -1;
+}
 .vpn-splash {
   min-height: 230px;
   border-radius: 24px;
@@ -220,6 +223,12 @@ input {
   background: linear-gradient(180deg, #ffffff, #f7f9fe);
   border: 1px solid var(--line);
 }
+.vpn-actions {
+  margin-bottom: 1rem;
+}
+.vpn-chart-grid {
+  min-height: 180px;
+}
 .panel {
   grid-column: span 6;
   border-radius: 28px;
@@ -238,6 +247,20 @@ input {
 .button-row {
   display: flex;
   flex-wrap: wrap;
+}
+.peer-actions button {
+  padding: 0.55rem 0.8rem;
+}
+.download-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 16px;
+  padding: 0.82rem 1.05rem;
+  background: linear-gradient(135deg, #7b68ff, #2ecfc7);
+  color: #fff;
+  font-weight: 700;
+  text-decoration: none;
 }
 .card-grid {
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -325,6 +348,16 @@ input {
   white-space: pre-wrap;
 }
 .log-screen.slim { min-height: 180px; }
+.config-editor {
+  min-height: 260px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 1rem;
+  background: #fafbff;
+  color: var(--ink);
+  resize: vertical;
+  font: 0.95rem/1.5 Consolas, "Courier New", monospace;
+}
 
 @media (max-width: 1180px) {
   .headline-grid { grid-template-columns: repeat(2, 1fr); }

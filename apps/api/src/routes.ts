@@ -7,7 +7,24 @@ import { authMiddleware, createSessionToken, login } from "./auth.js";
 import { config } from "./config.js";
 import { appendAudit, enqueueDownload, getOverview, getServiceLogs, getServices, listFiles, runServiceAction, scanMediaLibrary } from "./system.js";
 import { stateStore } from "./store.js";
-import { createVpnPeer, getVpnBackups, getVpnDashboard, getVpnSystemInfo, performVpnInterfaceAction, saveVpnConfig, saveVpnSettings } from "./vpn.js";
+import {
+  createVpnBackup,
+  createVpnPeer,
+  deleteVpnPeer,
+  disableVpnPeer,
+  downloadGeneratedVpnConfig,
+  enableVpnPeer,
+  getVpnBackups,
+  getVpnDashboard,
+  getVpnSystemInfo,
+  performVpnInterfaceAction,
+  reconnectVpnPeer,
+  renameVpnPeer,
+  restoreVpnBackup,
+  saveVpnConfig,
+  saveVpnSettings,
+  updateVpnPeer
+} from "./vpn.js";
 import type { AuthenticatedRequest } from "./auth.js";
 
 const loginSchema = z.object({
@@ -78,7 +95,7 @@ const vpnSettingsSchema = z.object({
 
 const vpnPeerSchema = z.object({
   name: z.string().min(1),
-  address: z.string().min(1),
+  address: z.string().optional().default(""),
   dns: z.string().min(1),
   allowedIps: z.string().min(1),
   endpoint: z.string().min(1),
@@ -88,6 +105,11 @@ const vpnPeerSchema = z.object({
 const vpnConfigSchema = z.object({
   configText: z.string().min(1)
 });
+
+const vpnRenameSchema = z.object({ name: z.string().min(1) });
+const vpnUpdatePeerSchema = z.object({ allowedIps: z.string().min(1), keepalive: z.string().optional().default("") });
+const vpnBlockSchema = z.object({ minutes: z.number().int().min(1).default(30) });
+const vpnRestoreSchema = z.object({ path: z.string().min(1) });
 
 const upload = multer({ dest: config.filesRoot });
 
@@ -232,6 +254,126 @@ router.post("/vpn/config", (req, res) => {
     res.status(204).end();
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : "Unable to save VPN config" });
+  }
+});
+
+router.post("/vpn/backups", (_req, res) => {
+  try {
+    const backupPath = createVpnBackup();
+    appendAudit("vpn.backup.create", `Created VPN backup ${backupPath}`, "admin");
+    res.status(201).json({ path: backupPath });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to create backup" });
+  }
+});
+
+router.post("/vpn/backups/restore", (req, res) => {
+  const parsed = vpnRestoreSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  try {
+    restoreVpnBackup(parsed.data.path);
+    appendAudit("vpn.backup.restore", `Restored VPN backup ${parsed.data.path}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to restore backup" });
+  }
+});
+
+router.get("/vpn/clients/:peerId/download", (req, res) => {
+  try {
+    const generated = downloadGeneratedVpnConfig(req.params.peerId);
+    res.setHeader("content-disposition", `attachment; filename="${generated.name.replace(/\s+/g, "_")}.conf"`);
+    res.type("text/plain").send(generated.clientConfig);
+  } catch (error) {
+    res.status(404).json({ error: error instanceof Error ? error.message : "Generated config not found" });
+  }
+});
+
+router.post("/vpn/peers/:peerId/rename", (req, res) => {
+  const parsed = vpnRenameSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  try {
+    renameVpnPeer(req.params.peerId, parsed.data.name);
+    appendAudit("vpn.peer.rename", `Renamed VPN peer ${req.params.peerId}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to rename peer" });
+  }
+});
+
+router.post("/vpn/peers/:peerId/update", (req, res) => {
+  const parsed = vpnUpdatePeerSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  try {
+    updateVpnPeer(req.params.peerId, parsed.data.allowedIps, parsed.data.keepalive);
+    appendAudit("vpn.peer.update", `Updated VPN peer ${req.params.peerId}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to update peer" });
+  }
+});
+
+router.post("/vpn/peers/:peerId/disable", (req, res) => {
+  try {
+    disableVpnPeer(req.params.peerId);
+    appendAudit("vpn.peer.disable", `Disabled VPN peer ${req.params.peerId}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to disable peer" });
+  }
+});
+
+router.post("/vpn/peers/:peerId/enable", (req, res) => {
+  try {
+    enableVpnPeer(req.params.peerId);
+    appendAudit("vpn.peer.enable", `Enabled VPN peer ${req.params.peerId}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to enable peer" });
+  }
+});
+
+router.post("/vpn/peers/:peerId/block", (req, res) => {
+  const parsed = vpnBlockSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  try {
+    disableVpnPeer(req.params.peerId, parsed.data.minutes);
+    appendAudit("vpn.peer.block", `Blocked VPN peer ${req.params.peerId} for ${parsed.data.minutes} minutes`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to block peer" });
+  }
+});
+
+router.post("/vpn/peers/:peerId/reconnect", async (req, res) => {
+  try {
+    await reconnectVpnPeer(req.params.peerId);
+    appendAudit("vpn.peer.reconnect", `Reconnected VPN peer ${req.params.peerId}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to reconnect peer" });
+  }
+});
+
+router.delete("/vpn/peers/:peerId", (req, res) => {
+  try {
+    deleteVpnPeer(req.params.peerId);
+    appendAudit("vpn.peer.delete", `Deleted VPN peer ${req.params.peerId}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to delete peer" });
   }
 });
 

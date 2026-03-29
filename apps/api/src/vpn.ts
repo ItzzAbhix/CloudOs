@@ -313,7 +313,10 @@ export async function performVpnInterfaceAction(action: "start" | "stop" | "rest
     try { await runCommand(["wg-quick", "down", config.vpnInterface]); } catch {}
     await runCommand(["wg-quick", "up", config.vpnInterface]);
   }
-  if (action === "reload") await runCommand(["wg-quick", "strip", config.vpnInterface]);
+  if (action === "reload") {
+    try { await runCommand(["wg-quick", "down", config.vpnInterface]); } catch {}
+    await runCommand(["wg-quick", "up", config.vpnInterface]);
+  }
 }
 
 function createKeyMaterial() {
@@ -327,18 +330,21 @@ export function createVpnPeer(payload: { name: string; address: string; dns: str
   const state = readVpnState();
   const { interfaceConfig, peers, text } = parseConfig();
   if (!text) throw new Error(`WireGuard config not found at ${config.vpnConfigPath}`);
+  const address = payload.address || nextAvailableIp(interfaceConfig.Address || "", peers);
+  if (!address) throw new Error("Could not infer next available client address.");
   const { privateKey, publicKey, presharedKey } = createKeyMaterial();
-  const block = `\n[Peer]\n# Name: ${payload.name}\nPublicKey = ${publicKey}\nPresharedKey = ${presharedKey}\nAllowedIPs = ${payload.address}\nPersistentKeepalive = ${payload.keepalive}\n`;
+  const runtimePublicKey = "";
+  const block = `\n[Peer]\n# Name: ${payload.name}\nPublicKey = ${publicKey}\nPresharedKey = ${presharedKey}\nAllowedIPs = ${address}\nPersistentKeepalive = ${payload.keepalive}\n`;
   writeConfigText(`${text.trim()}\n${block}`);
   state.deviceNames ??= {};
   state.generatedConfigs ??= {};
   state.deviceNames[publicKey] = payload.name;
   const generated = {
     name: payload.name,
-    address: payload.address,
+    address,
     publicKey,
     peerId: peerIdForKey(publicKey),
-    clientConfig: `[Interface]\nPrivateKey = ${privateKey}\nAddress = ${payload.address}\nDNS = ${payload.dns}\n\n[Peer]\nPublicKey = ${interfaceConfig.PrivateKey ? shortKey(interfaceConfig.PrivateKey) : "server-public-key"}\nPresharedKey = ${presharedKey}\nAllowedIPs = ${payload.allowedIps}\nEndpoint = ${payload.endpoint}\nPersistentKeepalive = ${payload.keepalive}\n`
+    clientConfig: `[Interface]\nPrivateKey = ${privateKey}\nAddress = ${address}\nDNS = ${payload.dns}\n\n[Peer]\nPublicKey = ${runtimePublicKey || "server-public-key"}\nPresharedKey = ${presharedKey}\nAllowedIPs = ${payload.allowedIps}\nEndpoint = ${payload.endpoint}\nPersistentKeepalive = ${payload.keepalive}\n`
   };
   state.generatedConfigs.last = generated;
   state.generatedConfigs[publicKey] = generated;
@@ -349,14 +355,8 @@ export function createVpnPeer(payload: { name: string; address: string; dns: str
 export function saveVpnConfig(text: string) {
   const current = readConfigText();
   if (!current) throw new Error(`WireGuard config not found at ${config.vpnConfigPath}`);
-  const state = readVpnState();
-  state.backups ??= [];
-  const backupPath = `${config.vpnConfigPath}.${Date.now()}.bak`;
-  fs.writeFileSync(backupPath, current);
-  state.backups.push({ path: backupPath, createdAt: new Date().toLocaleString() });
-  state.backups = state.backups.slice(-12);
+  backupVpnConfig();
   writeConfigText(text);
-  saveVpnState(state);
 }
 
 export function getVpnBackups() {
@@ -365,4 +365,223 @@ export function getVpnBackups() {
 
 export function getVpnSystemInfo() {
   return { hostname: os.hostname(), uptime: Math.floor(os.uptime() / 3600) };
+}
+
+function backupVpnConfig() {
+  const current = readConfigText();
+  if (!current) throw new Error(`WireGuard config not found at ${config.vpnConfigPath}`);
+  const state = readVpnState();
+  state.backups ??= [];
+  const backupPath = `${config.vpnConfigPath}.${Date.now()}.bak`;
+  fs.writeFileSync(backupPath, current);
+  state.backups.push({ path: backupPath, createdAt: new Date().toLocaleString() });
+  state.backups = state.backups.slice(-12);
+  saveVpnState(state);
+  return backupPath;
+}
+
+function findPeerKeyById(peerId: string) {
+  const dashboardPromise = parseConfig();
+  const state = readVpnState();
+  for (const peer of dashboardPromise.peers) {
+    if (peer.PublicKey && peerIdForKey(peer.PublicKey) === peerId) return peer.PublicKey;
+  }
+  for (const key of Object.keys(state.disabledPeers ?? {})) {
+    if (peerIdForKey(key) === peerId) return key;
+  }
+  throw new Error("Peer not found");
+}
+
+function rewriteConfig(mutator: (lines: string[]) => string[]) {
+  const current = readConfigText();
+  if (!current) throw new Error(`WireGuard config not found at ${config.vpnConfigPath}`);
+  backupVpnConfig();
+  writeConfigText(mutator(current.split(/\r?\n/)).join("\n"));
+}
+
+export function deleteVpnPeer(peerId: string) {
+  const peerKey = findPeerKeyById(peerId);
+  removeVpnPeerFromConfig(peerKey);
+  const state = readVpnState();
+  delete state.deviceNames?.[peerKey];
+  delete state.generatedConfigs?.[peerKey];
+  saveVpnState(state);
+}
+
+export function renameVpnPeer(peerId: string, name: string) {
+  const peerKey = findPeerKeyById(peerId);
+  const state = readVpnState();
+  state.deviceNames ??= {};
+  state.deviceNames[peerKey] = name;
+  saveVpnState(state);
+  rewriteConfig((lines) => {
+    const updated: string[] = [];
+    let inTarget = false;
+    let sawName = false;
+    for (const line of lines) {
+      const stripped = line.trim();
+      if (stripped === "[Peer]") {
+        inTarget = false;
+        sawName = false;
+        updated.push(line);
+        continue;
+      }
+      if (stripped.startsWith("PublicKey") && stripped.includes("=")) {
+        const currentKey = stripped.split("=", 2)[1]?.trim() ?? "";
+        inTarget = currentKey === peerKey;
+        if (inTarget && !sawName && updated.at(-1)?.trim() === "[Peer]") {
+          updated.push(`# Name: ${name}`);
+          sawName = true;
+        }
+        updated.push(line);
+        continue;
+      }
+      if (inTarget && stripped.startsWith("# Name:")) {
+        updated.push(`# Name: ${name}`);
+        sawName = true;
+        continue;
+      }
+      updated.push(line);
+    }
+    return updated;
+  });
+}
+
+export function updateVpnPeer(peerId: string, allowedIps: string, keepalive: string) {
+  const peerKey = findPeerKeyById(peerId);
+  rewriteConfig((lines) => {
+    const updated: string[] = [];
+    let inTarget = false;
+    let sawAllowed = false;
+    let sawKeepalive = false;
+    for (const line of lines) {
+      const stripped = line.trim();
+      if (stripped === "[Peer]") {
+        if (inTarget) {
+          if (!sawAllowed) updated.push(`AllowedIPs = ${allowedIps}`);
+          if (keepalive && !sawKeepalive) updated.push(`PersistentKeepalive = ${keepalive}`);
+        }
+        inTarget = false;
+        sawAllowed = false;
+        sawKeepalive = false;
+        updated.push(line);
+        continue;
+      }
+      if (stripped.startsWith("PublicKey") && stripped.includes("=")) {
+        const currentKey = stripped.split("=", 2)[1]?.trim() ?? "";
+        inTarget = currentKey === peerKey;
+        updated.push(line);
+        continue;
+      }
+      if (inTarget && stripped.startsWith("AllowedIPs")) {
+        updated.push(`AllowedIPs = ${allowedIps}`);
+        sawAllowed = true;
+        continue;
+      }
+      if (inTarget && stripped.startsWith("PersistentKeepalive")) {
+        if (keepalive) updated.push(`PersistentKeepalive = ${keepalive}`);
+        sawKeepalive = true;
+        continue;
+      }
+      updated.push(line);
+    }
+    if (inTarget) {
+      if (!sawAllowed) updated.push(`AllowedIPs = ${allowedIps}`);
+      if (keepalive && !sawKeepalive) updated.push(`PersistentKeepalive = ${keepalive}`);
+    }
+    return updated;
+  });
+}
+
+export function disableVpnPeer(peerId: string, minutes = 0) {
+  const peerKey = findPeerKeyById(peerId);
+  const { peers } = parseConfig();
+  const configPeer = peers.find((peer) => peer.PublicKey === peerKey);
+  if (!configPeer?.__raw__) throw new Error("Peer config block not found.");
+  removeVpnPeerFromConfig(peerKey);
+  const state = readVpnState();
+  state.disabledPeers ??= {};
+  state.disabledPeers[peerKey] = {
+    rawBlock: configPeer.__raw__,
+    blockedUntil: minutes > 0 ? Math.floor(Date.now() / 1000) + minutes * 60 : 0,
+    name: state.deviceNames?.[peerKey] ?? configPeer.Name ?? "Peer"
+  };
+  saveVpnState(state);
+}
+
+export function enableVpnPeer(peerId: string) {
+  const peerKey = findPeerKeyById(peerId);
+  const state = readVpnState();
+  const payload = state.disabledPeers?.[peerKey];
+  if (!payload) throw new Error("Peer is not disabled.");
+  const current = readConfigText();
+  if (!current) throw new Error(`WireGuard config not found at ${config.vpnConfigPath}`);
+  backupVpnConfig();
+  writeConfigText(`${current.trim()}\n${payload.rawBlock}\n`);
+  delete state.disabledPeers?.[peerKey];
+  saveVpnState(state);
+}
+
+export async function reconnectVpnPeer(peerId: string) {
+  const peerKey = findPeerKeyById(peerId);
+  if (await interfaceIsUp()) {
+    await runCommand(["wg", "set", config.vpnInterface, "peer", peerKey, "remove"]);
+    await performVpnInterfaceAction("reload");
+  }
+}
+
+function removeVpnPeerFromConfig(peerKey: string) {
+  rewriteConfig((lines) => {
+    const result: string[] = [];
+    let block: string[] = [];
+    let inPeer = false;
+
+    const flush = () => {
+      if (!block.length) return;
+      const matches = block.some((line) => line.trim().startsWith("PublicKey") && line.includes("=") && line.split("=", 2)[1]?.trim() === peerKey);
+      if (!matches) result.push(...block);
+      block = [];
+    };
+
+    for (const line of lines) {
+      const stripped = line.trim();
+      if (stripped === "[Peer]") {
+        flush();
+        inPeer = true;
+        block = [line];
+        continue;
+      }
+      if (inPeer) {
+        if (stripped === "[Interface]") {
+          flush();
+          inPeer = false;
+          result.push(line);
+          continue;
+        }
+        block.push(line);
+      } else {
+        result.push(line);
+      }
+    }
+    flush();
+    return result;
+  });
+}
+
+export function createVpnBackup() {
+  return backupVpnConfig();
+}
+
+export function restoreVpnBackup(backupPath: string) {
+  if (!fs.existsSync(backupPath)) throw new Error("Backup file not found.");
+  const text = fs.readFileSync(backupPath, "utf8");
+  backupVpnConfig();
+  writeConfigText(text);
+}
+
+export function downloadGeneratedVpnConfig(peerId: string) {
+  const state = readVpnState();
+  const item = Object.values(state.generatedConfigs ?? {}).find((entry) => entry.peerId === peerId);
+  if (!item) throw new Error("Generated config not found");
+  return item;
 }
