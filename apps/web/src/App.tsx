@@ -147,6 +147,9 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [vpnConfigText, setVpnConfigText] = useState("");
   const [vpnMessage, setVpnMessage] = useState("");
   const [vpnPeerSearch, setVpnPeerSearch] = useState("");
+  const [vpnDefaultsDirty, setVpnDefaultsDirty] = useState(false);
+  const [vpnConfigDirty, setVpnConfigDirty] = useState(false);
+  const [vpnPeerNameDrafts, setVpnPeerNameDrafts] = useState<Record<string, string>>({});
 
   async function refresh() {
     const [
@@ -191,12 +194,14 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
     setNotifications(notificationsResult);
     setAnalytics(analyticsResult);
     setVpn(vpnResult);
-    setVpnDefaults({
-      endpoint: vpnResult.defaults.endpoint ?? vpnResult.interface.endpointHint ?? "",
-      dns: vpnResult.defaults.dns ?? "",
-      allowedIps: vpnResult.defaults.allowedIps ?? "",
-      refreshSeconds: String(vpnResult.defaults.refreshSeconds ?? 10)
-    } as never);
+    if (!vpnDefaultsDirty) {
+      setVpnDefaults({
+        endpoint: vpnResult.defaults.endpoint ?? vpnResult.interface.endpointHint ?? "",
+        dns: vpnResult.defaults.dns ?? "",
+        allowedIps: vpnResult.defaults.allowedIps ?? "",
+        refreshSeconds: String(vpnResult.defaults.refreshSeconds ?? 10)
+      } as never);
+    }
     setVpnProvision((current) => ({
       name: current.name,
       address: current.address || vpnResult.stats.nextIp || "",
@@ -205,7 +210,18 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
       endpoint: current.endpoint || vpnResult.interface.endpointHint || "",
       keepalive: current.keepalive || "25"
     }));
-    setVpnConfigText(vpnResult.configText ?? "");
+    if (!vpnConfigDirty) {
+      setVpnConfigText(vpnResult.configText ?? "");
+    }
+    setVpnPeerNameDrafts((current) => {
+      const next = { ...current };
+      for (const peer of vpnResult.peers) {
+        if (!next[peer.peerId]) {
+          next[peer.peerId] = peer.name;
+        }
+      }
+      return next;
+    });
     setNetworkEvents(networkResult);
     setShareLinks(shareResult);
     setScripts(scriptsResult);
@@ -391,6 +407,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
         refreshSeconds: Number(vpnDefaults.refreshSeconds || 10)
       })
     });
+    setVpnDefaultsDirty(false);
     setVpnMessage("VPN defaults updated.");
     await refresh();
   }
@@ -403,6 +420,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
     });
     setVpnMessage(`Created VPN peer ${vpnProvision.name}.`);
     setActiveTab("vpn");
+    setVpnProvision({ name: "", address: "", dns: "", allowedIps: "", endpoint: "", keepalive: "25" });
     await refresh();
   }
 
@@ -417,6 +435,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
     } else {
       setVpnMessage("VPN config saved.");
     }
+    setVpnConfigDirty(false);
     await refresh();
   }
 
@@ -437,6 +456,14 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
     if (!name) return;
     await api(`/vpn/peers/${peerId}/rename`, { method: "POST", body: JSON.stringify({ name }) });
     setVpnMessage(`Renamed ${currentName} to ${name}.`);
+    await refresh();
+  }
+
+  async function saveVpnPeerNameAction(peerId: string, fallbackName: string) {
+    const name = (vpnPeerNameDrafts[peerId] ?? fallbackName).trim();
+    if (!name || name === fallbackName) return;
+    await api(`/vpn/peers/${peerId}/rename`, { method: "POST", body: JSON.stringify({ name }) });
+    setVpnMessage(`Renamed ${fallbackName} to ${name}.`);
     await refresh();
   }
 
@@ -806,10 +833,10 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
                     <span>Used for new client profiles</span>
                   </div>
                   <form className="vpn-form-stack" onSubmit={saveVpnDefaults}>
-                    <input value={vpnDefaults.endpoint} onChange={(event) => setVpnDefaults((current) => ({ ...current, endpoint: event.target.value }))} placeholder="Public endpoint host:port" />
-                    <input value={vpnDefaults.dns} onChange={(event) => setVpnDefaults((current) => ({ ...current, dns: event.target.value }))} placeholder="DNS servers" />
-                    <input value={vpnDefaults.allowedIps} onChange={(event) => setVpnDefaults((current) => ({ ...current, allowedIps: event.target.value }))} placeholder="Allowed IPs" />
-                    <input value={vpnDefaults.refreshSeconds} onChange={(event) => setVpnDefaults((current) => ({ ...current, refreshSeconds: event.target.value }))} placeholder="Refresh seconds" />
+                    <input value={vpnDefaults.endpoint} onChange={(event) => { setVpnDefaultsDirty(true); setVpnDefaults((current) => ({ ...current, endpoint: event.target.value })); }} placeholder="Public endpoint host:port" />
+                    <input value={vpnDefaults.dns} onChange={(event) => { setVpnDefaultsDirty(true); setVpnDefaults((current) => ({ ...current, dns: event.target.value })); }} placeholder="DNS servers" />
+                    <input value={vpnDefaults.allowedIps} onChange={(event) => { setVpnDefaultsDirty(true); setVpnDefaults((current) => ({ ...current, allowedIps: event.target.value })); }} placeholder="Allowed IPs" />
+                    <input value={vpnDefaults.refreshSeconds} onChange={(event) => { setVpnDefaultsDirty(true); setVpnDefaults((current) => ({ ...current, refreshSeconds: event.target.value })); }} placeholder="Refresh seconds" />
                     <button type="submit" className="vpn-primary-button">Save Dashboard Defaults</button>
                   </form>
                 </section>
@@ -865,7 +892,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
 
                 <section id="vpn-config" className="vpn-card vpn-card-config-right vpn-anchor-card">
                   <form className="vpn-form-stack" onSubmit={saveVpnConfig}>
-                    <textarea className="config-editor vpn-editor-large" value={vpnConfigText} onChange={(event) => setVpnConfigText(event.target.value)} />
+                    <textarea className="config-editor vpn-editor-large" value={vpnConfigText} onChange={(event) => { setVpnConfigDirty(true); setVpnConfigText(event.target.value); }} />
                     <div className="button-row">
                       <button type="submit">Save Config File</button>
                       <button type="button" onClick={() => void persistVpnConfig(true)}>Save And Apply</button>
@@ -898,8 +925,16 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
                         <Row label="Transfer" value={`${peer.rxHuman} down / ${peer.txHuman} up`} />
                         <Row label="Keepalive" value={peer.keepalive || "off"} />
                         {peer.blockedUntilHuman ? <Row label="Blocked Until" value={peer.blockedUntilHuman} /> : null}
+                        <div className="vpn-peer-rename">
+                          <input
+                            className="vpn-peer-inline-input"
+                            value={vpnPeerNameDrafts[peer.peerId] ?? peer.name}
+                            onChange={(event) => setVpnPeerNameDrafts((current) => ({ ...current, [peer.peerId]: event.target.value }))}
+                            placeholder="Peer name"
+                          />
+                          <button className="small-button wide-button" onClick={() => saveVpnPeerNameAction(peer.peerId, peer.name)}>Save Name</button>
+                        </div>
                         <div className="vpn-peer-tools">
-                          <button className="small-button" onClick={() => renameVpnPeerAction(peer.peerId, peer.name)}>Rename</button>
                           <button className="small-button" onClick={() => updateVpnPeerAction(peer.peerId, peer.allowedIps)}>Update Routes</button>
                         </div>
                         <div className="vpn-peer-tools">

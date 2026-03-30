@@ -301,7 +301,7 @@ input {
 }
 .alt-button,
 .small-button {
-  padding: 0.62rem 0.85rem;
+  padding: 0.72rem 1rem;
   border-radius: 12px;
 }
 .vpn-message,
@@ -460,6 +460,18 @@ input {
   gap: 0.7rem;
   flex-wrap: wrap;
 }
+.vpn-peer-rename {
+  margin-top: 0.9rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.7rem;
+}
+.vpn-peer-inline-input {
+  min-width: 0;
+}
+.wide-button {
+  min-width: 126px;
+}
 .vpn-line-chart {
   margin-top: 1rem;
   min-height: 210px;
@@ -592,6 +604,13 @@ input {
 .vpn-peer-head strong {
   display: block;
   margin-bottom: 0.45rem;
+}
+.vpn-peer-tools .small-button,
+.vpn-peer-head .small-button,
+.wide-button {
+  flex: 1 1 140px;
+  min-height: 48px;
+  font-size: 1rem;
 }
 .panel {
   grid-column: span 6;
