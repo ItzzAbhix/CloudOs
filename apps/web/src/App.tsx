@@ -46,6 +46,15 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+function parseHumanBytes(value: string) {
+  const match = value.trim().match(/^([\d.]+)\s*(B|KB|MB|GB|TB)$/i);
+  if (!match) return 0;
+  const amount = Number(match[1]);
+  const unit = (match[2] ?? "B").toUpperCase();
+  const factors: Record<string, number> = { B: 1, KB: 1024, MB: 1024 ** 2, GB: 1024 ** 3, TB: 1024 ** 4 };
+  return amount * (factors[unit] ?? 1);
+}
+
 const navItems = [
   ["overview", "Overview"],
   ["services", "Services"],
@@ -266,6 +275,22 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
       [peer.name, peer.publicKeyShort ?? "", peer.endpoint, peer.allowedIps].join(" ").toLowerCase().includes(query)
     );
   }, [vpn, vpnPeerSearch]);
+
+  const vpnDeviceUsage = useMemo(() => {
+    const peers = (vpn?.peers ?? []).map((peer) => {
+      const rxBytes = parseHumanBytes(peer.rxHuman);
+      const txBytes = parseHumanBytes(peer.txHuman);
+      return {
+        ...peer,
+        totalBytes: rxBytes + txBytes,
+        totalHuman: `${peer.rxHuman} / ${peer.txHuman}`
+      };
+    });
+    const max = Math.max(...peers.map((peer) => peer.totalBytes), 1);
+    return peers
+      .sort((left, right) => right.totalBytes - left.totalBytes)
+      .map((peer) => ({ ...peer, usagePercent: Math.max(8, Math.round((peer.totalBytes / max) * 100)) }));
+  }, [vpn]);
 
   async function serviceAction(id: string, action: "restart") {
     await api(`/services/${id}/action`, { method: "POST", body: JSON.stringify({ action }) });
@@ -558,30 +583,27 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
 
         {activeTab === "vpn" && vpn ? (
           <section className="vpn-room">
-            <aside className="vpn-rail">
-              <div className="vpn-rail-brand">
-                <strong>WireOS</strong>
-                <p>Control WireGuard from a single panel</p>
-              </div>
-              <nav className="vpn-rail-nav">
-                <button className="vpn-rail-link active">Overview</button>
-                <button className="vpn-rail-link">Provision Client</button>
-                <button className="vpn-rail-link">Peers</button>
-                <button className="vpn-rail-link">Server Defaults</button>
-                <button className="vpn-rail-link">Config Editor</button>
-              </nav>
-              <div className="vpn-rail-stats">
-                <div className="vpn-rail-stat"><span>Interface</span><strong>{vpn.interface.up ? "Up" : "Down"}</strong></div>
-                <div className="vpn-rail-stat"><span>Online Peers</span><strong>{vpnPeerStats.online}</strong></div>
-                <div className="vpn-rail-stat"><span>Latest Sync</span><strong>{vpn.stats.latestHandshake}</strong></div>
-              </div>
-              <div className="vpn-rail-footer">
-                <div><span>Host</span><strong>{vpn.system?.hostname ?? "Unknown"}</strong></div>
-                <div><span>Uptime</span><strong>{vpn.system?.uptime ?? "unknown"}</strong></div>
-              </div>
-            </aside>
-
             <div className="vpn-room-main">
+              <section className="vpn-room-navbar">
+                <div className="vpn-navbar-brand">
+                  <strong>WireOS</strong>
+                  <p>Control WireGuard from a single panel</p>
+                </div>
+                <nav className="vpn-navbar-links">
+                  <button className="vpn-navbar-link active">Overview</button>
+                  <button className="vpn-navbar-link">Provision Client</button>
+                  <button className="vpn-navbar-link">Peers</button>
+                  <button className="vpn-navbar-link">Server Defaults</button>
+                  <button className="vpn-navbar-link">Config Editor</button>
+                </nav>
+                <div className="vpn-navbar-stats">
+                  <div className="vpn-navbar-chip"><span>Interface</span><strong>{vpn.interface.up ? "Up" : "Down"}</strong></div>
+                  <div className="vpn-navbar-chip"><span>Online Peers</span><strong>{vpnPeerStats.online}</strong></div>
+                  <div className="vpn-navbar-chip"><span>Latest Sync</span><strong>{vpn.stats.latestHandshake}</strong></div>
+                  <div className="vpn-navbar-chip"><span>Host</span><strong>{vpn.system?.hostname ?? "Unknown"}</strong></div>
+                </div>
+              </section>
+
               <section className="vpn-room-topbar">
                 <div>
                   <span className="vpn-top-label">WireGuard Command Center</span>
@@ -679,13 +701,26 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
                 <section className="vpn-card vpn-card-device">
                   <div className="vpn-card-head">
                     <h3>Device Analytics</h3>
-                    <span>Peer posture</span>
+                    <span>Per device usage</span>
                   </div>
                   <div className="vpn-device-grid">
                     <div><span>Online</span><strong>{vpnPeerStats.online}</strong></div>
                     <div><span>Offline</span><strong>{vpnPeerStats.offline}</strong></div>
                     <div><span>Never Connected</span><strong>{vpnPeerStats.neverConnected}</strong></div>
                     <div><span>Disabled</span><strong>{vpnPeerStats.disabled}</strong></div>
+                  </div>
+                  <div className="vpn-device-usage-list">
+                    {vpnDeviceUsage.map((peer) => (
+                      <div key={peer.peerId} className="vpn-device-usage-row">
+                        <div className="vpn-device-usage-head">
+                          <strong>{peer.name}</strong>
+                          <span>{peer.totalHuman}</span>
+                        </div>
+                        <div className="vpn-device-usage-bar">
+                          <div className="vpn-device-usage-fill" style={{ width: `${peer.usagePercent}%` }} />
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </section>
 
