@@ -459,6 +459,7 @@ input {
   display: flex;
   gap: 0.7rem;
   flex-wrap: wrap;
+  margin-top: 0.85rem;
 }
 .vpn-peer-rename {
   margin-top: 0.9rem;
@@ -611,6 +612,14 @@ input {
   flex: 1 1 140px;
   min-height: 48px;
   font-size: 1rem;
+}
+.vpn-peer-head .small-button {
+  flex: 0 0 auto;
+  min-width: 112px;
+}
+.vpn-peer-tools .small-button,
+.wide-button {
+  justify-content: center;
 }
 .panel {
   grid-column: span 6;

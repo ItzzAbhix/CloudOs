@@ -1108,7 +1108,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
 
         {activeTab === "games" ? (
           <section className="content-grid">
-            <Panel title="Game Servers"><p className="subcopy">Optional module ready for future orchestration.</p></Panel>
+            <Panel title="Minecraft Servers"><p className="subcopy">Optional module ready for future orchestration.</p></Panel>
           </section>
         ) : null}
       </main>
