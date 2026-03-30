@@ -30,6 +30,104 @@ type RuntimePeer = {
 
 type ConfigPeer = Record<string, string> & { __raw__?: string };
 
+function useRemoteBackend() {
+  return Boolean(config.vpnRemoteUrl);
+}
+
+async function remoteRequest(pathname: string, init?: RequestInit) {
+  if (!config.vpnRemoteUrl) throw new Error("VPN remote URL is not configured");
+  const response = await fetch(`${config.vpnRemoteUrl.replace(/\/+$/, "")}${pathname}`, {
+    ...init,
+    headers: {
+      ...(init?.body ? { "content-type": "application/json" } : {}),
+      "x-cloudos-vpn-token": config.vpnAgentToken,
+      ...(init?.headers ?? {})
+    }
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `VPN remote request failed (${response.status})`);
+  }
+  return response;
+}
+
+async function remoteJson<T>(pathname: string, init?: RequestInit) {
+  const response = await remoteRequest(pathname, init);
+  if (response.status === 204) return undefined as T;
+  return (await response.json()) as T;
+}
+
+function normalizeRemoteDashboard(payload: any): VpnDashboardData {
+  return {
+    interface: {
+      name: payload.interface?.name ?? config.vpnInterface,
+      up: Boolean(payload.interface?.up),
+      publicKey: payload.interface?.public_key ?? "",
+      publicKeyShort: payload.interface?.public_key_short ?? "Unavailable",
+      listenPort: payload.interface?.listen_port ?? "",
+      addresses: payload.interface?.addresses ?? "",
+      endpointHint: payload.interface?.endpoint_hint ?? "",
+      configAccessible: Boolean(payload.interface?.config_accessible)
+    },
+    stats: {
+      totalPeers: payload.stats?.total_peers ?? 0,
+      onlinePeers: payload.stats?.online_peers ?? 0,
+      totalRx: payload.stats?.total_rx ?? "0 B",
+      totalTx: payload.stats?.total_tx ?? "0 B",
+      latestHandshake: payload.stats?.latest_handshake ?? "Never",
+      nextIp: payload.stats?.next_ip ?? "",
+      pool: payload.stats?.pool ?? "",
+      disabledPeers: payload.stats?.disabled_peers ?? 0
+    },
+    defaults: {
+      endpoint: payload.interface?.endpoint_hint ?? "",
+      dns: payload.defaults?.dns ?? config.vpnDefaultDns,
+      allowedIps: payload.defaults?.allowed_ips ?? config.vpnDefaultAllowedIps,
+      refreshSeconds: payload.defaults?.refresh_seconds ?? config.vpnRefreshSeconds
+    },
+    peers: (payload.peers ?? []).map((peer: any) => ({
+      peerId: peer.peer_id,
+      name: peer.name,
+      publicKey: peer.public_key ?? "",
+      publicKeyShort: peer.public_key_short ?? "",
+      endpoint: peer.endpoint ?? "N/A",
+      allowedIps: peer.allowed_ips ?? "",
+      keepalive: peer.keepalive ?? "off",
+      rxHuman: peer.rx_human ?? "0 B",
+      txHuman: peer.tx_human ?? "0 B",
+      handshakeAgo: peer.handshake_ago ?? "Never",
+      online: Boolean(peer.online),
+      seenBefore: Boolean(peer.seen_before),
+      disabled: Boolean(peer.disabled),
+      blockedUntil: peer.blocked_until,
+      blockedUntilHuman: peer.blocked_until_human ?? ""
+    })),
+    generatedPeer: payload.generated_peer
+      ? {
+          name: payload.generated_peer.name,
+          address: payload.generated_peer.address,
+          publicKey: payload.generated_peer.public_key,
+          peerId: payload.generated_peer.peer_id,
+          clientConfig: payload.generated_peer.client_config
+        }
+      : null,
+    generatedConfigs: (payload.generated_configs ?? []).map((item: any) => ({
+      name: item.name,
+      address: item.address,
+      publicKey: item.public_key,
+      peerId: item.peer_id,
+      clientConfig: item.client_config
+    })),
+    analytics: payload.analytics ?? [],
+    configText: payload.config_text ?? "",
+    configPath: payload.config_path ?? config.vpnConfigPath,
+    generatedAt: payload.generated_at ?? new Date().toLocaleString(),
+    backups: (payload.backups ?? []).map((item: any) => ({ path: item.path, createdAt: item.created_at ?? item.createdAt ?? "" })),
+    system: payload.system ? { hostname: payload.system.hostname ?? "Unknown", uptime: payload.system.uptime ?? "unknown" } : undefined,
+    error: payload.error ?? undefined
+  };
+}
+
 function readVpnState(): VpnState {
   if (!fs.existsSync(config.vpnStateFile)) {
     const initial: VpnState = { deviceNames: {}, disabledPeers: {}, generatedConfigs: {}, analytics: [], backups: [] };
@@ -61,6 +159,13 @@ async function runCommand(args: string[], input?: string) {
   const finalArgs = config.vpnUseSudo ? args : rest;
   const result = await execFileAsync(command, finalArgs, { input, encoding: "utf8" } as never);
   return String(result.stdout).trim();
+}
+
+async function generateKeyMaterial() {
+  const privateKey = await runCommand(["wg", "genkey"]);
+  const publicKey = await runCommand(["wg", "pubkey"], `${privateKey}\n`);
+  const presharedKey = await runCommand(["wg", "genpsk"]);
+  return { privateKey, publicKey, presharedKey };
 }
 
 function readConfigText() {
@@ -206,6 +311,9 @@ function appendAnalytics(state: VpnState, onlinePeers: number, rxBytes: number, 
 }
 
 export async function getVpnDashboard(): Promise<VpnDashboardData> {
+  if (useRemoteBackend()) {
+    return normalizeRemoteDashboard(await remoteJson<any>("/api/agent/dashboard"));
+  }
   const state = readVpnState();
   const settings = uiSettings(state);
   const { interfaceConfig, peers: configPeers, text } = parseConfig();
@@ -225,6 +333,7 @@ export async function getVpnDashboard(): Promise<VpnDashboardData> {
     totalRx += peer.rxBytes;
     totalTx += peer.txBytes;
     latestHandshake = Math.max(latestHandshake, peer.handshakeEpoch);
+    const seenBefore = peer.handshakeEpoch > 0;
     mergedPeers.push({
       peerId: peerIdForKey(peer.publicKey),
       name: (peerKey ? state.deviceNames?.[peerKey] : undefined) ?? meta.Name ?? `Peer ${mergedPeers.length + 1}`,
@@ -237,6 +346,7 @@ export async function getVpnDashboard(): Promise<VpnDashboardData> {
       txHuman: humanBytes(peer.txBytes),
       handshakeAgo: formatAge(peer.handshakeEpoch),
       online,
+      seenBefore,
       disabled: Boolean(disabledMeta),
       blockedUntil: disabledMeta?.blockedUntil,
       blockedUntilHuman: disabledMeta?.blockedUntil ? new Date(disabledMeta.blockedUntil * 1000).toLocaleString() : ""
@@ -258,6 +368,7 @@ export async function getVpnDashboard(): Promise<VpnDashboardData> {
       txHuman: "0 B",
       handshakeAgo: "Pending activation",
       online: false,
+      seenBefore: false,
       disabled: Boolean(state.disabledPeers?.[peerKey])
     });
   }
@@ -300,13 +411,21 @@ export async function getVpnDashboard(): Promise<VpnDashboardData> {
   };
 }
 
-export function saveVpnSettings(payload: { endpoint: string; dns: string; allowedIps: string; refreshSeconds: number }) {
+export async function saveVpnSettings(payload: { endpoint: string; dns: string; allowedIps: string; refreshSeconds: number }) {
+  if (useRemoteBackend()) {
+    await remoteRequest("/api/agent/settings", { method: "POST", body: JSON.stringify(payload) });
+    return;
+  }
   const state = readVpnState();
   state.uiSettings = payload;
   saveVpnState(state);
 }
 
-export async function performVpnInterfaceAction(action: "start" | "stop" | "restart" | "reload") {
+export async function performVpnInterfaceAction(action: "start" | "stop" | "restart" | "reload" | "save") {
+  if (useRemoteBackend()) {
+    await remoteRequest(`/api/agent/interface/${action}`, { method: "POST" });
+    return;
+  }
   if (action === "start") await runCommand(["wg-quick", "up", config.vpnInterface]);
   if (action === "stop") await runCommand(["wg-quick", "down", config.vpnInterface]);
   if (action === "restart") {
@@ -317,25 +436,28 @@ export async function performVpnInterfaceAction(action: "start" | "stop" | "rest
     try { await runCommand(["wg-quick", "down", config.vpnInterface]); } catch {}
     await runCommand(["wg-quick", "up", config.vpnInterface]);
   }
+  if (action === "save") await runCommand(["wg-quick", "save", config.vpnInterface]);
 }
 
-function createKeyMaterial() {
-  const privateKey = crypto.randomBytes(32).toString("base64");
-  const publicKey = crypto.randomBytes(32).toString("base64");
-  const presharedKey = crypto.randomBytes(32).toString("base64");
-  return { privateKey, publicKey, presharedKey };
-}
-
-export function createVpnPeer(payload: { name: string; address: string; dns: string; allowedIps: string; endpoint: string; keepalive: string }) {
+export async function createVpnPeer(payload: { name: string; address: string; dns: string; allowedIps: string; endpoint: string; keepalive: string }) {
+  if (useRemoteBackend()) {
+    return remoteJson<{ name: string; address: string; publicKey: string; peerId: string; clientConfig: string }>("/api/agent/peers", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    });
+  }
   const state = readVpnState();
   const { interfaceConfig, peers, text } = parseConfig();
   if (!text) throw new Error(`WireGuard config not found at ${config.vpnConfigPath}`);
   const address = payload.address || nextAvailableIp(interfaceConfig.Address || "", peers);
   if (!address) throw new Error("Could not infer next available client address.");
-  const { privateKey, publicKey, presharedKey } = createKeyMaterial();
-  const runtimePublicKey = "";
+  const { privateKey, publicKey, presharedKey } = await generateKeyMaterial();
+  const runtimePublicKey = (await interfaceIsUp()) ? (await parseDump()).interfaceData.publicKey : "";
   const block = `\n[Peer]\n# Name: ${payload.name}\nPublicKey = ${publicKey}\nPresharedKey = ${presharedKey}\nAllowedIPs = ${address}\nPersistentKeepalive = ${payload.keepalive}\n`;
   writeConfigText(`${text.trim()}\n${block}`);
+  if (await interfaceIsUp()) {
+    await runCommand(["wg", "set", config.vpnInterface, "peer", publicKey, "preshared-key", "/dev/stdin", "allowed-ips", address], `${presharedKey}\n`);
+  }
   state.deviceNames ??= {};
   state.generatedConfigs ??= {};
   state.deviceNames[publicKey] = payload.name;
@@ -352,18 +474,28 @@ export function createVpnPeer(payload: { name: string; address: string; dns: str
   return generated;
 }
 
-export function saveVpnConfig(text: string) {
+export async function saveVpnConfig(text: string) {
+  if (useRemoteBackend()) {
+    await remoteRequest("/api/agent/config", { method: "POST", body: JSON.stringify({ configText: text }) });
+    return;
+  }
   const current = readConfigText();
   if (!current) throw new Error(`WireGuard config not found at ${config.vpnConfigPath}`);
   backupVpnConfig();
   writeConfigText(text);
 }
 
-export function getVpnBackups() {
+export async function getVpnBackups() {
+  if (useRemoteBackend()) {
+    return remoteJson<Array<{ path: string; createdAt: string }>>("/api/agent/backups");
+  }
   return readVpnState().backups ?? [];
 }
 
-export function getVpnSystemInfo() {
+export async function getVpnSystemInfo() {
+  if (useRemoteBackend()) {
+    return remoteJson<{ hostname: string; uptime: number }>("/api/agent/system");
+  }
   return { hostname: os.hostname(), uptime: Math.floor(os.uptime() / 3600) };
 }
 
@@ -399,7 +531,11 @@ function rewriteConfig(mutator: (lines: string[]) => string[]) {
   writeConfigText(mutator(current.split(/\r?\n/)).join("\n"));
 }
 
-export function deleteVpnPeer(peerId: string) {
+export async function deleteVpnPeer(peerId: string) {
+  if (useRemoteBackend()) {
+    await remoteRequest(`/api/agent/peers/${peerId}`, { method: "DELETE" });
+    return;
+  }
   const peerKey = findPeerKeyById(peerId);
   removeVpnPeerFromConfig(peerKey);
   const state = readVpnState();
@@ -408,7 +544,11 @@ export function deleteVpnPeer(peerId: string) {
   saveVpnState(state);
 }
 
-export function renameVpnPeer(peerId: string, name: string) {
+export async function renameVpnPeer(peerId: string, name: string) {
+  if (useRemoteBackend()) {
+    await remoteRequest(`/api/agent/peers/${peerId}/rename`, { method: "POST", body: JSON.stringify({ name }) });
+    return;
+  }
   const peerKey = findPeerKeyById(peerId);
   const state = readVpnState();
   state.deviceNames ??= {};
@@ -447,7 +587,11 @@ export function renameVpnPeer(peerId: string, name: string) {
   });
 }
 
-export function updateVpnPeer(peerId: string, allowedIps: string, keepalive: string) {
+export async function updateVpnPeer(peerId: string, allowedIps: string, keepalive: string) {
+  if (useRemoteBackend()) {
+    await remoteRequest(`/api/agent/peers/${peerId}/update`, { method: "POST", body: JSON.stringify({ allowedIps, keepalive }) });
+    return;
+  }
   const peerKey = findPeerKeyById(peerId);
   rewriteConfig((lines) => {
     const updated: string[] = [];
@@ -493,7 +637,13 @@ export function updateVpnPeer(peerId: string, allowedIps: string, keepalive: str
   });
 }
 
-export function disableVpnPeer(peerId: string, minutes = 0) {
+export async function disableVpnPeer(peerId: string, minutes = 0) {
+  if (useRemoteBackend()) {
+    const suffix = minutes > 0 ? "/block" : "/disable";
+    const body = minutes > 0 ? JSON.stringify({ minutes }) : undefined;
+    await remoteRequest(`/api/agent/peers/${peerId}${suffix}`, { method: "POST", body });
+    return;
+  }
   const peerKey = findPeerKeyById(peerId);
   const { peers } = parseConfig();
   const configPeer = peers.find((peer) => peer.PublicKey === peerKey);
@@ -509,7 +659,11 @@ export function disableVpnPeer(peerId: string, minutes = 0) {
   saveVpnState(state);
 }
 
-export function enableVpnPeer(peerId: string) {
+export async function enableVpnPeer(peerId: string) {
+  if (useRemoteBackend()) {
+    await remoteRequest(`/api/agent/peers/${peerId}/enable`, { method: "POST" });
+    return;
+  }
   const peerKey = findPeerKeyById(peerId);
   const state = readVpnState();
   const payload = state.disabledPeers?.[peerKey];
@@ -523,6 +677,10 @@ export function enableVpnPeer(peerId: string) {
 }
 
 export async function reconnectVpnPeer(peerId: string) {
+  if (useRemoteBackend()) {
+    await remoteRequest(`/api/agent/peers/${peerId}/reconnect`, { method: "POST" });
+    return;
+  }
   const peerKey = findPeerKeyById(peerId);
   if (await interfaceIsUp()) {
     await runCommand(["wg", "set", config.vpnInterface, "peer", peerKey, "remove"]);
@@ -568,18 +726,33 @@ function removeVpnPeerFromConfig(peerKey: string) {
   });
 }
 
-export function createVpnBackup() {
+export async function createVpnBackup() {
+  if (useRemoteBackend()) {
+    return remoteJson<{ path: string }>("/api/agent/backups", { method: "POST" });
+  }
   return backupVpnConfig();
 }
 
-export function restoreVpnBackup(backupPath: string) {
+export async function restoreVpnBackup(backupPath: string) {
+  if (useRemoteBackend()) {
+    await remoteRequest("/api/agent/backups/restore", { method: "POST", body: JSON.stringify({ path: backupPath }) });
+    return;
+  }
   if (!fs.existsSync(backupPath)) throw new Error("Backup file not found.");
   const text = fs.readFileSync(backupPath, "utf8");
   backupVpnConfig();
   writeConfigText(text);
 }
 
-export function downloadGeneratedVpnConfig(peerId: string) {
+export async function downloadGeneratedVpnConfig(peerId: string) {
+  if (useRemoteBackend()) {
+    const response = await remoteRequest(`/api/agent/clients/${peerId}/download`);
+    const clientConfig = await response.text();
+    const contentDisposition = response.headers.get("content-disposition") ?? "";
+    const match = contentDisposition.match(/filename="([^"]+)"/);
+    const filename = match?.[1] ?? `${peerId}.conf`;
+    return { name: filename.replace(/\.conf$/i, ""), clientConfig };
+  }
   const state = readVpnState();
   const item = Object.values(state.generatedConfigs ?? {}).find((entry) => entry.peerId === peerId);
   if (!item) throw new Error("Generated config not found");

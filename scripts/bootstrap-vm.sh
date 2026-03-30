@@ -44,6 +44,7 @@ mkdir -p "${CLOUDOS_ROOT}/data/n8n"
 mkdir -p "${CLOUDOS_ROOT}/data/cloudos/storage/files"
 mkdir -p "${CLOUDOS_ROOT}/data/cloudos/storage/downloads"
 mkdir -p "${CLOUDOS_ROOT}/data/cloudos/storage/media"
+mkdir -p "${CLOUDOS_ROOT}/data/vpn-legacy"
 mkdir -p "${CLOUDOS_ROOT}/secrets"
 mkdir -p "${CLOUDOS_ROOT}/scripts"
 mkdir -p "${CLOUDOS_ROOT}/apps"
@@ -57,6 +58,7 @@ install -m 644 "${REPO_ROOT}/tsconfig.base.json" "${CLOUDOS_ROOT}/tsconfig.base.
 install -m 644 "${REPO_ROOT}/.gitignore" "${CLOUDOS_ROOT}/.gitignore"
 cp -R "${REPO_ROOT}/apps/api" "${CLOUDOS_ROOT}/apps/"
 cp -R "${REPO_ROOT}/apps/web" "${CLOUDOS_ROOT}/apps/"
+cp -R "${REPO_ROOT}/apps/vpn-legacy" "${CLOUDOS_ROOT}/apps/"
 if [[ -f "${REPO_ROOT}/data/cloudos-state.json" ]]; then
   install -m 644 "${REPO_ROOT}/data/cloudos-state.json" "${CLOUDOS_ROOT}/data/cloudos-state.json"
 fi
@@ -74,6 +76,7 @@ ufw allow 5678/tcp
 ufw allow 9999/tcp
 ufw allow 4000/tcp
 ufw allow 8088/tcp
+ufw allow 8090/tcp
 ufw --force enable
 
 docker compose --env-file "${ENV_FILE}" -f "${CLOUDOS_ROOT}/docker-compose.yml" pull nginx-proxy-manager portainer n8n dozzle

@@ -1,4 +1,31 @@
 services:
+  vpn-legacy:
+    build:
+      context: .
+      dockerfile: apps/vpn-legacy/Dockerfile
+    container_name: cloudos-vpn-legacy
+    restart: unless-stopped
+    ports:
+      - "8090:5000"
+    environment:
+      PORT: 5000
+      WG_INTERFACE: ${WG_INTERFACE:-wg0}
+      WG_CONFIG_PATH: ${WG_CONFIG_PATH:-/etc/wireguard/wg0.conf}
+      WG_DEFAULT_DNS: ${WG_DEFAULT_DNS:-1.1.1.1, 1.0.0.1}
+      WG_DEFAULT_ALLOWED_IPS: ${WG_DEFAULT_ALLOWED_IPS:-0.0.0.0/0}
+      WG_SERVER_ENDPOINT: ${WG_SERVER_ENDPOINT:-}
+      WG_REFRESH_SECONDS: ${WG_REFRESH_SECONDS:-10}
+      WG_USE_SUDO: ${WG_USE_SUDO:-0}
+      WG_DASHBOARD_SECRET: ${WG_DASHBOARD_SECRET:-change-this-secret}
+      DASHBOARD_USERNAME: ${VPN_DASHBOARD_USERNAME:-admin}
+      DASHBOARD_PASSWORD: ${VPN_DASHBOARD_PASSWORD:-admin123}
+      DASHBOARD_PASSWORD_HASH: ${VPN_DASHBOARD_PASSWORD_HASH:-}
+      WG_DASHBOARD_STATE: /app/state/wireguard_dashboard_state.json
+    volumes:
+      - /opt/cloudos/data/vpn-legacy:/app/state
+    networks:
+      - cloudos
+
   api:
     build:
       context: .
@@ -30,6 +57,7 @@ services:
     restart: unless-stopped
     depends_on:
       - api
+      - vpn-legacy
     ports:
       - "${CLOUDOS_WEB_PORT:-8088}:80"
     networks:

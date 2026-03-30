@@ -28,5 +28,7 @@ export const config = {
   vpnDefaultAllowedIps: process.env.WG_DEFAULT_ALLOWED_IPS ?? "0.0.0.0/0",
   vpnServerEndpoint: process.env.WG_SERVER_ENDPOINT ?? "",
   vpnRefreshSeconds: Number(process.env.WG_REFRESH_SECONDS ?? 10),
-  vpnUseSudo: process.env.WG_USE_SUDO === "1"
+  vpnUseSudo: process.env.WG_USE_SUDO === "1",
+  vpnRemoteUrl: process.env.CLOUDOS_VPN_REMOTE_URL ?? "",
+  vpnAgentToken: process.env.CLOUDOS_VPN_AGENT_TOKEN ?? ""
 };

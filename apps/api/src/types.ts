@@ -142,6 +142,7 @@ export interface VpnPeerRecord {
   txHuman: string;
   handshakeAgo: string;
   online: boolean;
+  seenBefore?: boolean;
   disabled: boolean;
   blockedUntil?: number;
   blockedUntilHuman?: string;
@@ -169,6 +170,7 @@ export interface VpnDashboardData {
     disabledPeers: number;
   };
   defaults: {
+    endpoint?: string;
     dns: string;
     allowedIps: string;
     refreshSeconds: number;
@@ -197,6 +199,8 @@ export interface VpnDashboardData {
   configText: string;
   configPath: string;
   generatedAt: string;
+  backups?: Array<{ path: string; createdAt: string }>;
+  system?: { hostname: string; uptime: string | number };
   error?: string;
 }
 

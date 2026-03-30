@@ -20,18 +20,18 @@ type Analytics = {
   auditTimeline: Array<{ id: string; message: string; actor: string }>;
 };
 type VpnDashboard = {
-  interface: { name: string; up: boolean; publicKeyShort: string; listenPort: string; addresses: string; endpointHint: string };
+  interface: { name: string; up: boolean; publicKeyShort: string; listenPort: string; addresses: string; endpointHint: string; configAccessible?: boolean };
   stats: { totalPeers: number; onlinePeers: number; totalRx: string; totalTx: string; latestHandshake: string; nextIp: string; pool: string; disabledPeers: number };
   defaults: { endpoint?: string; dns: string; allowedIps: string; refreshSeconds: number };
-  peers: Array<{ peerId: string; name: string; endpoint: string; allowedIps: string; handshakeAgo: string; rxHuman: string; txHuman: string; online: boolean; disabled: boolean }>;
+  peers: Array<{ peerId: string; name: string; publicKeyShort?: string; endpoint: string; allowedIps: string; keepalive?: string; handshakeAgo: string; rxHuman: string; txHuman: string; online: boolean; seenBefore?: boolean; disabled: boolean; blockedUntilHuman?: string }>;
   generatedPeer: null | { name: string; address: string; publicKey: string; peerId: string; clientConfig: string };
-  generatedConfigs: Array<{ name: string; address: string; publicKey: string }>;
+  generatedConfigs: Array<{ name: string; address: string; publicKey: string; peerId: string; clientConfig: string }>;
   analytics?: Array<{ timestamp: number; onlinePeers: number; rxBytes: number; txBytes: number }>;
   configText: string;
   configPath: string;
   generatedAt: string;
   backups?: Array<{ path: string; createdAt: string }>;
-  system?: { hostname: string; uptime: number };
+  system?: { hostname: string; uptime: string | number };
   error?: string;
 };
 
@@ -130,6 +130,9 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [scripts, setScripts] = useState<Array<{ id: string; name: string; command: string; description: string }>>([]);
   const [logs, setLogs] = useState("");
   const [downloadUrl, setDownloadUrl] = useState("");
+  const [newFolderName, setNewFolderName] = useState("");
+  const [sharePath, setSharePath] = useState("");
+  const [sharePassword, setSharePassword] = useState("");
   const [vpnProvision, setVpnProvision] = useState({ name: "", address: "", dns: "", allowedIps: "", endpoint: "", keepalive: "25" });
   const [vpnDefaults, setVpnDefaults] = useState({ endpoint: "", dns: "", allowedIps: "", refreshSeconds: "10" });
   const [vpnConfigText, setVpnConfigText] = useState("");
@@ -240,6 +243,44 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
     await refresh();
   }
 
+  async function createFolderAction(event: FormEvent) {
+    event.preventDefault();
+    if (!files?.currentPath || !newFolderName) return;
+    await api("/files/folders", {
+      method: "POST",
+      body: JSON.stringify({ parentPath: files.currentPath, name: newFolderName })
+    });
+    setNewFolderName("");
+    await refresh();
+  }
+
+  async function deletePathAction(targetPath: string) {
+    await api("/files", { method: "DELETE", body: JSON.stringify({ targetPath }) });
+    await refresh();
+  }
+
+  async function createShareAction(event: FormEvent) {
+    event.preventDefault();
+    if (!sharePath) return;
+    await api("/sharing", {
+      method: "POST",
+      body: JSON.stringify({ path: sharePath, password: sharePassword || undefined })
+    });
+    setSharePath("");
+    setSharePassword("");
+    await refresh();
+  }
+
+  async function retryDownloadAction(id: string) {
+    await api(`/downloads/${id}/retry`, { method: "POST" });
+    await refresh();
+  }
+
+  async function deleteDownloadAction(id: string) {
+    await api(`/downloads/${id}`, { method: "DELETE" });
+    await refresh();
+  }
+
   async function runScript(command: string) {
     const result = await api<{ stdout: string; stderr: string; error?: string }>("/scripts/run", {
       method: "POST",
@@ -253,7 +294,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
     await refresh();
   }
 
-  async function vpnInterfaceAction(action: "start" | "stop" | "restart" | "reload") {
+  async function vpnInterfaceAction(action: "start" | "stop" | "restart" | "reload" | "save") {
     await api(`/vpn/interface/${action}`, { method: "POST" });
     setVpnMessage(`VPN action executed: ${action}`);
     await refresh();
@@ -285,14 +326,23 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
     await refresh();
   }
 
-  async function saveVpnConfig(event: FormEvent) {
-    event.preventDefault();
+  async function persistVpnConfig(applyNow = false) {
     await api("/vpn/config", {
       method: "POST",
       body: JSON.stringify({ configText: vpnConfigText })
     });
-    setVpnMessage("VPN config saved.");
+    if (applyNow) {
+      await api("/vpn/interface/reload", { method: "POST" });
+      setVpnMessage("VPN config saved and applied.");
+    } else {
+      setVpnMessage("VPN config saved.");
+    }
     await refresh();
+  }
+
+  async function saveVpnConfig(event: FormEvent) {
+    event.preventDefault();
+    await persistVpnConfig(false);
   }
 
   async function vpnPeerAction(peerId: string, action: "disable" | "enable" | "reconnect" | "delete") {
@@ -459,157 +509,183 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
           </section>
         ) : null}
 
-        {activeTab === "vpn" ? (
+        {activeTab === "vpn" && vpn ? (
           <section className="content-grid">
-            {vpnMessage ? <div className="status-banner vpn-banner">{vpnMessage}</div> : null}
-            <Panel title="WireGuard Command Center" wide>
-              <section className="vpn-hero-grid">
-                <div className="vpn-splash lilac">
-                  <span>Network posture</span>
-                  <strong>{vpn ? `${vpn.stats.onlinePeers}/${vpn.stats.totalPeers}` : "0/0"} peers active</strong>
-                  <p>Provision clients, watch live handshakes, and keep VPN defaults inside CloudOS.</p>
-                  <div className="vpn-mini-grid">
-                    <div className="mini-surface darkish"><span>Rx</span><strong>{vpn?.stats.totalRx ?? "0 B"}</strong></div>
-                    <div className="mini-surface darkish"><span>Tx</span><strong>{vpn?.stats.totalTx ?? "0 B"}</strong></div>
-                    <div className="mini-surface darkish"><span>Pool</span><strong>{vpn?.stats.pool || "Unknown"}</strong></div>
+            <Panel title={`${vpn.interface.name} Dashboard`} wide>
+              <div className="vpn-shell">
+                <div className="vpn-hero-grid">
+                  <div className="vpn-splash lilac">
+                    <span>WireGuard Command Center</span>
+                    <strong>{vpn.stats.onlinePeers}/{vpn.stats.totalPeers} peers active</strong>
+                    <p>Provision clients, apply runtime changes, update defaults, and manage the raw config without dropping into SSH for every change.</p>
+                    <div className="vpn-mini-grid">
+                      <div className="mini-surface darkish"><span>Rx</span><strong>{vpn.stats.totalRx}</strong></div>
+                      <div className="mini-surface darkish"><span>Tx</span><strong>{vpn.stats.totalTx}</strong></div>
+                      <div className="mini-surface darkish"><span>Pool</span><strong>{vpn.stats.pool || "Not detected"}</strong></div>
+                    </div>
+                  </div>
+                  <div className="vpn-summary-card">
+                    <Row label="Interface" value={vpn.interface.up ? "Up" : "Down"} />
+                    <Row label="Listen Port" value={vpn.interface.listenPort || "N/A"} />
+                    <Row label="Addresses" value={vpn.interface.addresses || "N/A"} />
+                    <Row label="Server Key" value={vpn.interface.publicKeyShort} />
+                    <Row label="Latest Handshake" value={vpn.stats.latestHandshake} />
                   </div>
                 </div>
-                <div className="vpn-summary-card">
-                  <div className="button-row vpn-actions">
-                    <button onClick={() => vpnInterfaceAction("start")}>Start</button>
-                    <button onClick={() => vpnInterfaceAction("stop")}>Stop</button>
-                    <button onClick={() => vpnInterfaceAction("restart")}>Restart</button>
-                    <button onClick={() => vpnInterfaceAction("reload")}>Apply</button>
-                  </div>
-                  <Row label="Interface" value={vpn?.interface.up ? "Up" : "Down"} />
-                  <Row label="Listen Port" value={vpn?.interface.listenPort || "N/A"} />
-                  <Row label="Address" value={vpn?.interface.addresses || "N/A"} />
-                  <Row label="Latest Handshake" value={vpn?.stats.latestHandshake || "Never"} />
-                  <Row label="Server Key" value={vpn?.interface.publicKeyShort || "Unavailable"} />
-                  <Row label="Host" value={vpn?.system ? `${vpn.system.hostname}` : "Unknown"} />
+
+                <div className="card-grid vpn-actions">
+                  <button onClick={() => vpnInterfaceAction("start")}>Start</button>
+                  <button onClick={() => vpnInterfaceAction("stop")}>Stop</button>
+                  <button onClick={() => vpnInterfaceAction("restart")}>Restart</button>
+                  <button onClick={() => vpnInterfaceAction("reload")}>Apply Config</button>
+                  <button onClick={() => vpnInterfaceAction("save")}>Save Runtime</button>
+                  <button onClick={createVpnBackupAction}>Create Backup</button>
                 </div>
-              </section>
+
+                {vpnMessage ? <p className="subcopy">{vpnMessage}</p> : null}
+                {vpn.error ? <p className="error">{vpn.error}</p> : null}
+              </div>
             </Panel>
-            <Panel title="Usage Analytics">
+
+            <Panel title="Usage Analytics" wide>
               <div className="chart-grid vpn-chart-grid">
-                {(vpn?.analytics ?? []).slice(-12).map((sample: { timestamp: number; onlinePeers: number }, index: number) => (
-                  <div key={`${sample.timestamp}-${index}`} className="chart-col">
-                    <div className={`chart-bar tone-${index % 4}`} style={{ height: `${Math.max(26, sample.onlinePeers * 26)}px` }} />
-                    <strong>{sample.onlinePeers}</strong>
+                {(vpn.analytics ?? []).slice(-12).map((point, index) => (
+                  <div key={point.timestamp} className="chart-col">
+                    <div className={`chart-bar tone-${index % 4}`} style={{ height: `${Math.max(28, Math.min(180, point.onlinePeers * 36 + point.rxBytes / 250000))}px` }} />
+                    <strong>{new Date(point.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</strong>
                   </div>
                 ))}
               </div>
             </Panel>
-            <Panel title="Quick Actions">
-              <div className="card-grid">
-                <div className="mini-surface"><strong>Create clients</strong><p>Generate keys, allocate the next peer IP, and produce a ready client config.</p></div>
-                <div className="mini-surface"><strong>Manage defaults</strong><p>Keep endpoint, DNS, routes, and refresh values in one place.</p></div>
-                <div className="mini-surface"><strong>Live config</strong><p>Edit the raw config and push the current version back to the VPN runtime.</p></div>
-              </div>
-            </Panel>
-            <Panel title="Peers" wide>
-              {vpn?.error ? <p className="error">VPN runtime unavailable: {vpn.error}</p> : null}
-              <div className="list-grid">
-                {(vpn?.peers ?? []).map((device) => (
-                  <div key={device.peerId} className="list-row">
-                    <div>
-                      <strong>{device.name}</strong>
-                      <p>{device.endpoint}</p>
-                    </div>
-                    <span className={`badge ${device.disabled ? "bad" : device.online ? "good" : "neutral"}`}>{device.disabled ? "disabled" : device.online ? "online" : "idle"}</span>
-                    <span>{device.handshakeAgo}</span>
-                    <span>{device.rxHuman}</span>
-                    <div className="button-row peer-actions">
-                      <button onClick={() => renameVpnPeerAction(device.peerId, device.name)}>Rename</button>
-                      <button onClick={() => updateVpnPeerAction(device.peerId, device.allowedIps)}>Routes</button>
-                      {device.disabled ? (
-                        <button onClick={() => vpnPeerAction(device.peerId, "enable")}>Enable</button>
-                      ) : (
-                        <button onClick={() => vpnPeerAction(device.peerId, "disable")}>Disable</button>
-                      )}
-                      <button onClick={() => blockVpnPeerAction(device.peerId)}>Block</button>
-                      <button onClick={() => vpnPeerAction(device.peerId, "reconnect")}>Reconnect</button>
-                      <button onClick={() => vpnPeerAction(device.peerId, "delete")}>Delete</button>
-                    </div>
-                  </div>
-                ))}
-                {!vpn?.peers.length ? <p className="subcopy">No WireGuard peers available from the configured runtime source.</p> : null}
-              </div>
-            </Panel>
+
             <Panel title="Provision Client">
               <form className="stack" onSubmit={provisionVpnPeer}>
-                <input placeholder="Client name" value={vpnProvision.name} onChange={(event) => setVpnProvision((current) => ({ ...current, name: event.target.value }))} />
-                <input placeholder="Client address" value={vpnProvision.address} onChange={(event) => setVpnProvision((current) => ({ ...current, address: event.target.value }))} />
-                <input placeholder="DNS servers" value={vpnProvision.dns} onChange={(event) => setVpnProvision((current) => ({ ...current, dns: event.target.value }))} />
-                <input placeholder="Allowed IPs" value={vpnProvision.allowedIps} onChange={(event) => setVpnProvision((current) => ({ ...current, allowedIps: event.target.value }))} />
-                <input placeholder="Server endpoint host:port" value={vpnProvision.endpoint} onChange={(event) => setVpnProvision((current) => ({ ...current, endpoint: event.target.value }))} />
-                <input placeholder="PersistentKeepalive" value={vpnProvision.keepalive} onChange={(event) => setVpnProvision((current) => ({ ...current, keepalive: event.target.value }))} />
+                <input value={vpnProvision.name} onChange={(event) => setVpnProvision((current) => ({ ...current, name: event.target.value }))} placeholder="Client name" required />
+                <input value={vpnProvision.address} onChange={(event) => setVpnProvision((current) => ({ ...current, address: event.target.value }))} placeholder="Client address, e.g. 10.0.0.2/32" />
+                <input value={vpnProvision.dns} onChange={(event) => setVpnProvision((current) => ({ ...current, dns: event.target.value }))} placeholder="DNS servers" />
+                <input value={vpnProvision.allowedIps} onChange={(event) => setVpnProvision((current) => ({ ...current, allowedIps: event.target.value }))} placeholder="Allowed IPs" />
+                <input value={vpnProvision.endpoint} onChange={(event) => setVpnProvision((current) => ({ ...current, endpoint: event.target.value }))} placeholder="Public endpoint host:port" />
+                <input value={vpnProvision.keepalive} onChange={(event) => setVpnProvision((current) => ({ ...current, keepalive: event.target.value }))} placeholder="PersistentKeepalive" />
                 <button type="submit">Create Client</button>
               </form>
             </Panel>
-            <Panel title="Server Defaults">
-              <form className="stack" onSubmit={saveVpnDefaults}>
-                <input placeholder="Public endpoint host:port" value={vpnDefaults.endpoint} onChange={(event) => setVpnDefaults((current) => ({ ...current, endpoint: event.target.value }))} />
-                <input placeholder="DNS servers" value={vpnDefaults.dns} onChange={(event) => setVpnDefaults((current) => ({ ...current, dns: event.target.value }))} />
-                <input placeholder="Allowed IPs" value={vpnDefaults.allowedIps} onChange={(event) => setVpnDefaults((current) => ({ ...current, allowedIps: event.target.value }))} />
-                <input placeholder="Refresh seconds" value={vpnDefaults.refreshSeconds} onChange={(event) => setVpnDefaults((current) => ({ ...current, refreshSeconds: event.target.value }))} />
-                <button type="submit">Save Dashboard Defaults</button>
-              </form>
-            </Panel>
+
             <Panel title="Latest Generated Client">
-              {vpn?.generatedPeer ? (
-                <>
+              {vpn.generatedPeer ? (
+                <div className="stack">
                   <Row label="Name" value={vpn.generatedPeer.name} />
                   <Row label="Address" value={vpn.generatedPeer.address} />
                   <Row label="Public Key" value={vpn.generatedPeer.publicKey} />
                   <div className="button-row">
-                    <a className="download-link" href={`/api/vpn/clients/${vpn.generatedPeer.peerId}/download`}>Download .conf</a>
+                    <a className="download-link" href={`/api/vpn/clients/${vpn.generatedPeer.peerId}/download`} target="_blank" rel="noreferrer">
+                      Download .conf
+                    </a>
                   </div>
-                  <pre className="log-screen slim">{vpn.generatedPeer.clientConfig}</pre>
-                </>
+                  <textarea className="config-editor" readOnly value={vpn.generatedPeer.clientConfig} />
+                </div>
               ) : (
-                <p className="subcopy">No generated client profile yet.</p>
+                <p className="subcopy">No generated client yet.</p>
               )}
             </Panel>
+
+            <Panel title="Server Defaults">
+              <form className="stack" onSubmit={saveVpnDefaults}>
+                <input value={vpnDefaults.endpoint} onChange={(event) => setVpnDefaults((current) => ({ ...current, endpoint: event.target.value }))} placeholder="Public endpoint host:port" />
+                <input value={vpnDefaults.dns} onChange={(event) => setVpnDefaults((current) => ({ ...current, dns: event.target.value }))} placeholder="DNS servers" />
+                <input value={vpnDefaults.allowedIps} onChange={(event) => setVpnDefaults((current) => ({ ...current, allowedIps: event.target.value }))} placeholder="Allowed IPs" />
+                <input value={vpnDefaults.refreshSeconds} onChange={(event) => setVpnDefaults((current) => ({ ...current, refreshSeconds: event.target.value }))} placeholder="Refresh seconds" />
+                <button type="submit">Save Dashboard Defaults</button>
+              </form>
+            </Panel>
+
             <Panel title="Recent Client Profiles">
-              <div className="list-grid">
-                {(vpn?.generatedConfigs ?? []).map((item) => (
-                  <div key={item.publicKey} className="list-row">
-                    <div>
-                      <strong>{item.name}</strong>
-                      <p>{item.address}</p>
+              <div className="card-grid">
+                {vpn.generatedConfigs.slice(0, 4).map((item) => (
+                  <div key={item.peerId} className="mini-surface">
+                    <strong>{item.name}</strong>
+                    <p>{item.address}</p>
+                    <small>{item.publicKey}</small>
+                    <div className="button-row">
+                      <a className="download-link" href={`/api/vpn/clients/${item.peerId}/download`} target="_blank" rel="noreferrer">
+                        Download
+                      </a>
                     </div>
-                    <span>{item.publicKey}</span>
+                    <textarea className="config-editor" readOnly value={item.clientConfig} />
                   </div>
                 ))}
-                {!vpn?.generatedConfigs?.length ? <p className="subcopy">No stored generated profiles yet.</p> : null}
+                {!vpn.generatedConfigs.length ? <p className="subcopy">Generated profiles will appear here after you create clients.</p> : null}
               </div>
             </Panel>
+
             <Panel title="Config Editor" wide>
-              <div className="mini-surface">
-                <strong>{vpn?.configPath || "VPN config path unavailable"}</strong>
-                <p>Last sync {vpn?.generatedAt || "unknown"}</p>
+              <div className="card-grid">
+                <div className="mini-surface">
+                  <strong>Config file</strong>
+                  <p>{vpn.configPath}</p>
+                  <p>Updated {vpn.generatedAt}</p>
+                </div>
+                <div className="mini-surface">
+                  <strong>Host</strong>
+                  <p>{vpn.system?.hostname ?? "Unknown"}</p>
+                  <p>Uptime {vpn.system?.uptime ?? "unknown"}</p>
+                </div>
               </div>
               <form className="stack" onSubmit={saveVpnConfig}>
                 <textarea className="config-editor" value={vpnConfigText} onChange={(event) => setVpnConfigText(event.target.value)} />
-                <button type="submit">Save Config</button>
+                <div className="button-row">
+                  <button type="submit">Save Config File</button>
+                  <button type="button" onClick={() => void persistVpnConfig(true)}>Save And Apply</button>
+                </div>
               </form>
             </Panel>
-            <Panel title="Backups" wide>
-              <div className="button-row">
-                <button onClick={createVpnBackupAction}>Create Backup</button>
-              </div>
+
+            <Panel title="Backups">
               <div className="list-grid">
-                {(vpn?.backups ?? []).map((backup) => (
-                  <div key={`${backup.path}-${backup.createdAt}`} className="list-row">
-                    <div>
-                      <strong>{backup.path}</strong>
-                      <p>{backup.createdAt}</p>
-                    </div>
+                {(vpn.backups ?? []).map((backup) => (
+                  <div key={backup.path} className="list-row">
+                    <div><strong>{backup.createdAt}</strong><p>{backup.path}</p></div>
                     <button onClick={() => restoreVpnBackupAction(backup.path)}>Restore</button>
                   </div>
                 ))}
-                {!vpn?.backups?.length ? <p className="subcopy">No VPN config backups recorded yet.</p> : null}
+                {!(vpn.backups ?? []).length ? <p className="subcopy">No backups created yet.</p> : null}
+              </div>
+            </Panel>
+
+            <Panel title="Peer Inventory" wide>
+              <div className="card-grid">
+                {vpn.peers.map((peer) => (
+                  <div key={peer.peerId} className="service-card">
+                    <div className="service-top">
+                      <div>
+                        <strong>{peer.name}</strong>
+                        <p>{peer.publicKeyShort ?? peer.endpoint}</p>
+                      </div>
+                      <span className={`badge ${peer.online ? "good" : peer.seenBefore ? "warn" : "bad"}`}>
+                        {peer.online ? "Online" : peer.seenBefore ? "Seen Before" : "Never Connected"}
+                      </span>
+                    </div>
+                    <Row label="Allowed IPs" value={peer.allowedIps} />
+                    <Row label="Endpoint" value={peer.endpoint || "N/A"} />
+                    <Row label="Handshake" value={peer.handshakeAgo} />
+                    <Row label="Transfer" value={`${peer.rxHuman} down / ${peer.txHuman} up`} />
+                    <Row label="Keepalive" value={peer.keepalive || "off"} />
+                    {peer.blockedUntilHuman ? <Row label="Blocked Until" value={peer.blockedUntilHuman} /> : null}
+                    <div className="button-row peer-actions">
+                      <button onClick={() => renameVpnPeerAction(peer.peerId, peer.name)}>Rename</button>
+                      <button onClick={() => updateVpnPeerAction(peer.peerId, peer.allowedIps)}>Routes</button>
+                      {peer.disabled ? (
+                        <button onClick={() => vpnPeerAction(peer.peerId, "enable")}>Enable</button>
+                      ) : (
+                        <>
+                          <button onClick={() => vpnPeerAction(peer.peerId, "disable")}>Disable</button>
+                          <button onClick={() => vpnPeerAction(peer.peerId, "reconnect")}>Reconnect</button>
+                          <button onClick={() => blockVpnPeerAction(peer.peerId)}>Block</button>
+                        </>
+                      )}
+                      <button onClick={() => vpnPeerAction(peer.peerId, "delete")}>Remove</button>
+                    </div>
+                  </div>
+                ))}
               </div>
             </Panel>
           </section>
@@ -618,12 +694,17 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
         {activeTab === "files" ? (
           <section className="content-grid">
             <Panel title={`Files · ${files?.currentPath ?? ""}`} wide>
+              <form className="stack compact-stack" onSubmit={createFolderAction}>
+                <input value={newFolderName} onChange={(event) => setNewFolderName(event.target.value)} placeholder="Create new folder" />
+                <button type="submit">Create Folder</button>
+              </form>
               <div className="list-grid">
                 {files?.entries.map((entry) => (
                   <div key={entry.path} className="list-row">
                     <div><strong>{entry.name}</strong><p>{entry.path}</p></div>
                     <span>{entry.type}</span>
                     <span>{entry.size} B</span>
+                    <button onClick={() => deletePathAction(entry.path)}>Delete</button>
                   </div>
                 ))}
               </div>
@@ -646,6 +727,10 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
                     <div><strong>{download.status}</strong><p>{download.url}</p></div>
                     <span>{download.progress}%</span>
                     <span>{download.targetPath}</span>
+                    <div className="button-row compact-actions">
+                      <button onClick={() => retryDownloadAction(download.id)}>Retry</button>
+                      <button onClick={() => deleteDownloadAction(download.id)}>Remove</button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -710,7 +795,28 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
 
         {activeTab === "sharing" ? (
           <section className="content-grid">
-            <Panel title="Share Links">{shareLinks.map((item) => <Row key={item.id} label={item.path} value={item.expiresAt ?? "No expiry"} />)}</Panel>
+            <Panel title="Create Share">
+              <form className="stack" onSubmit={createShareAction}>
+                <input value={sharePath} onChange={(event) => setSharePath(event.target.value)} placeholder="Absolute path to share" />
+                <input value={sharePassword} onChange={(event) => setSharePassword(event.target.value)} placeholder="Optional password" />
+                <button type="submit">Generate Link</button>
+              </form>
+            </Panel>
+            <Panel title="Share Links" wide>
+              <div className="list-grid">
+                {shareLinks.map((item) => (
+                  <div key={item.id} className="list-row">
+                    <div>
+                      <strong>{item.path}</strong>
+                      <p>{item.expiresAt ?? "No expiry"}</p>
+                    </div>
+                    <a className="download-link" href={`/api/public/shares/${item.id}/access`} target="_blank" rel="noreferrer">
+                      Open
+                    </a>
+                  </div>
+                ))}
+              </div>
+            </Panel>
           </section>
         ) : null}
 

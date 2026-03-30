@@ -247,6 +247,36 @@ export function listFiles(rootPath = config.filesRoot) {
   };
 }
 
+export function resolveStoragePath(requestedPath: string) {
+  const resolved = path.resolve(requestedPath);
+  const base = path.resolve(config.storageRoot);
+  if (!resolved.startsWith(base)) {
+    throw new Error("Path outside allowed storage root");
+  }
+  return resolved;
+}
+
+export function createFolder(parentPath: string, name: string) {
+  const resolvedParent = resolveStoragePath(parentPath);
+  const target = path.join(resolvedParent, name);
+  fs.mkdirSync(target, { recursive: true });
+  return listFiles(resolvedParent);
+}
+
+export function movePath(sourcePath: string, destinationDir: string) {
+  const source = resolveStoragePath(sourcePath);
+  const destination = resolveStoragePath(destinationDir);
+  fs.mkdirSync(destination, { recursive: true });
+  const target = path.join(destination, path.basename(source));
+  fs.renameSync(source, target);
+  return target;
+}
+
+export function deletePath(targetPath: string) {
+  const resolved = resolveStoragePath(targetPath);
+  fs.rmSync(resolved, { recursive: true, force: true });
+}
+
 export function appendAudit(type: string, message: string, actor: string) {
   stateStore.update((draft) => {
     draft.audit.push(createAudit(type, message, actor));

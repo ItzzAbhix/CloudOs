@@ -5,7 +5,7 @@ import multer from "multer";
 import { z } from "zod";
 import { authMiddleware, createSessionToken, login } from "./auth.js";
 import { config } from "./config.js";
-import { appendAudit, enqueueDownload, getOverview, getServiceLogs, getServices, listFiles, runServiceAction, scanMediaLibrary } from "./system.js";
+import { appendAudit, createFolder, deletePath, enqueueDownload, getOverview, getServiceLogs, getServices, listFiles, movePath, runServiceAction, scanMediaLibrary } from "./system.js";
 import { stateStore } from "./store.js";
 import {
   createVpnBackup,
@@ -75,6 +75,10 @@ const shareSchema = z.object({
   password: z.string().optional(),
   expiresAt: z.string().optional()
 });
+const shareAccessSchema = z.object({ password: z.string().optional() });
+const folderSchema = z.object({ parentPath: z.string().min(1), name: z.string().min(1) });
+const moveSchema = z.object({ sourcePath: z.string().min(1), destinationDir: z.string().min(1) });
+const deleteSchema = z.object({ targetPath: z.string().min(1) });
 
 const scriptRunSchema = z.object({
   command: z.string().min(1)
@@ -117,6 +121,53 @@ export const router = Router();
 
 router.get("/health", (_req, res) => {
   res.json({ ok: true });
+});
+
+router.post("/public/shares/:id/access", (req, res) => {
+  const share = stateStore.getState().shareLinks.find((entry) => entry.id === req.params.id);
+  if (!share) {
+    res.status(404).json({ error: "Share not found" });
+    return;
+  }
+  if (share.expiresAt && new Date(share.expiresAt).getTime() < Date.now()) {
+    res.status(410).json({ error: "Share expired" });
+    return;
+  }
+  const parsed = shareAccessSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  if (share.password && share.password !== parsed.data.password) {
+    res.status(403).json({ error: "Invalid share password" });
+    return;
+  }
+  if (!fs.existsSync(share.path)) {
+    res.status(404).json({ error: "Shared file missing" });
+    return;
+  }
+  res.download(share.path);
+});
+
+router.get("/public/shares/:id/access", (req, res) => {
+  const share = stateStore.getState().shareLinks.find((entry) => entry.id === req.params.id);
+  if (!share) {
+    res.status(404).json({ error: "Share not found" });
+    return;
+  }
+  if (share.password) {
+    res.status(403).json({ error: "Password required" });
+    return;
+  }
+  if (share.expiresAt && new Date(share.expiresAt).getTime() < Date.now()) {
+    res.status(410).json({ error: "Share expired" });
+    return;
+  }
+  if (!fs.existsSync(share.path)) {
+    res.status(404).json({ error: "Shared file missing" });
+    return;
+  }
+  res.download(share.path);
 });
 
 router.post("/auth/login", (req, res) => {
@@ -195,14 +246,14 @@ router.get("/services/:id/logs", async (req, res) => {
 router.get("/vpn/dashboard", async (_req, res) => {
   res.json({
     ...(await getVpnDashboard()),
-    system: getVpnSystemInfo(),
-    backups: getVpnBackups()
+    system: await getVpnSystemInfo(),
+    backups: await getVpnBackups()
   });
 });
 
 router.post("/vpn/interface/:action", async (req, res) => {
   const action = req.params.action;
-  if (action !== "start" && action !== "stop" && action !== "restart" && action !== "reload") {
+  if (action !== "start" && action !== "stop" && action !== "restart" && action !== "reload" && action !== "save") {
     res.status(404).json({ error: "Invalid action" });
     return;
   }
@@ -216,25 +267,25 @@ router.post("/vpn/interface/:action", async (req, res) => {
   }
 });
 
-router.post("/vpn/settings", (req, res) => {
+router.post("/vpn/settings", async (req, res) => {
   const parsed = vpnSettingsSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
-  saveVpnSettings(parsed.data);
+  await saveVpnSettings(parsed.data);
   appendAudit("vpn.settings", "Updated VPN dashboard defaults", "admin");
   res.status(204).end();
 });
 
-router.post("/vpn/peers", (req, res) => {
+router.post("/vpn/peers", async (req, res) => {
   const parsed = vpnPeerSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
   try {
-    const generated = createVpnPeer(parsed.data);
+    const generated = await createVpnPeer(parsed.data);
     appendAudit("vpn.peer.create", `Created VPN peer ${generated.name}`, "admin");
     res.status(201).json(generated);
   } catch (error) {
@@ -242,14 +293,14 @@ router.post("/vpn/peers", (req, res) => {
   }
 });
 
-router.post("/vpn/config", (req, res) => {
+router.post("/vpn/config", async (req, res) => {
   const parsed = vpnConfigSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
   try {
-    saveVpnConfig(parsed.data.configText);
+    await saveVpnConfig(parsed.data.configText);
     appendAudit("vpn.config.save", "Saved VPN config", "admin");
     res.status(204).end();
   } catch (error) {
@@ -257,9 +308,10 @@ router.post("/vpn/config", (req, res) => {
   }
 });
 
-router.post("/vpn/backups", (_req, res) => {
+router.post("/vpn/backups", async (_req, res) => {
   try {
-    const backupPath = createVpnBackup();
+    const backupResult = await createVpnBackup();
+    const backupPath = typeof backupResult === "string" ? backupResult : backupResult.path;
     appendAudit("vpn.backup.create", `Created VPN backup ${backupPath}`, "admin");
     res.status(201).json({ path: backupPath });
   } catch (error) {
@@ -267,14 +319,14 @@ router.post("/vpn/backups", (_req, res) => {
   }
 });
 
-router.post("/vpn/backups/restore", (req, res) => {
+router.post("/vpn/backups/restore", async (req, res) => {
   const parsed = vpnRestoreSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
   try {
-    restoreVpnBackup(parsed.data.path);
+    await restoreVpnBackup(parsed.data.path);
     appendAudit("vpn.backup.restore", `Restored VPN backup ${parsed.data.path}`, "admin");
     res.status(204).end();
   } catch (error) {
@@ -282,9 +334,9 @@ router.post("/vpn/backups/restore", (req, res) => {
   }
 });
 
-router.get("/vpn/clients/:peerId/download", (req, res) => {
+router.get("/vpn/clients/:peerId/download", async (req, res) => {
   try {
-    const generated = downloadGeneratedVpnConfig(req.params.peerId);
+    const generated = await downloadGeneratedVpnConfig(req.params.peerId);
     res.setHeader("content-disposition", `attachment; filename="${generated.name.replace(/\s+/g, "_")}.conf"`);
     res.type("text/plain").send(generated.clientConfig);
   } catch (error) {
@@ -292,14 +344,14 @@ router.get("/vpn/clients/:peerId/download", (req, res) => {
   }
 });
 
-router.post("/vpn/peers/:peerId/rename", (req, res) => {
+router.post("/vpn/peers/:peerId/rename", async (req, res) => {
   const parsed = vpnRenameSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
   try {
-    renameVpnPeer(req.params.peerId, parsed.data.name);
+    await renameVpnPeer(req.params.peerId, parsed.data.name);
     appendAudit("vpn.peer.rename", `Renamed VPN peer ${req.params.peerId}`, "admin");
     res.status(204).end();
   } catch (error) {
@@ -307,14 +359,14 @@ router.post("/vpn/peers/:peerId/rename", (req, res) => {
   }
 });
 
-router.post("/vpn/peers/:peerId/update", (req, res) => {
+router.post("/vpn/peers/:peerId/update", async (req, res) => {
   const parsed = vpnUpdatePeerSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
   try {
-    updateVpnPeer(req.params.peerId, parsed.data.allowedIps, parsed.data.keepalive);
+    await updateVpnPeer(req.params.peerId, parsed.data.allowedIps, parsed.data.keepalive);
     appendAudit("vpn.peer.update", `Updated VPN peer ${req.params.peerId}`, "admin");
     res.status(204).end();
   } catch (error) {
@@ -322,9 +374,9 @@ router.post("/vpn/peers/:peerId/update", (req, res) => {
   }
 });
 
-router.post("/vpn/peers/:peerId/disable", (req, res) => {
+router.post("/vpn/peers/:peerId/disable", async (req, res) => {
   try {
-    disableVpnPeer(req.params.peerId);
+    await disableVpnPeer(req.params.peerId);
     appendAudit("vpn.peer.disable", `Disabled VPN peer ${req.params.peerId}`, "admin");
     res.status(204).end();
   } catch (error) {
@@ -332,9 +384,9 @@ router.post("/vpn/peers/:peerId/disable", (req, res) => {
   }
 });
 
-router.post("/vpn/peers/:peerId/enable", (req, res) => {
+router.post("/vpn/peers/:peerId/enable", async (req, res) => {
   try {
-    enableVpnPeer(req.params.peerId);
+    await enableVpnPeer(req.params.peerId);
     appendAudit("vpn.peer.enable", `Enabled VPN peer ${req.params.peerId}`, "admin");
     res.status(204).end();
   } catch (error) {
@@ -342,14 +394,14 @@ router.post("/vpn/peers/:peerId/enable", (req, res) => {
   }
 });
 
-router.post("/vpn/peers/:peerId/block", (req, res) => {
+router.post("/vpn/peers/:peerId/block", async (req, res) => {
   const parsed = vpnBlockSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.flatten() });
     return;
   }
   try {
-    disableVpnPeer(req.params.peerId, parsed.data.minutes);
+    await disableVpnPeer(req.params.peerId, parsed.data.minutes);
     appendAudit("vpn.peer.block", `Blocked VPN peer ${req.params.peerId} for ${parsed.data.minutes} minutes`, "admin");
     res.status(204).end();
   } catch (error) {
@@ -367,9 +419,9 @@ router.post("/vpn/peers/:peerId/reconnect", async (req, res) => {
   }
 });
 
-router.delete("/vpn/peers/:peerId", (req, res) => {
+router.delete("/vpn/peers/:peerId", async (req, res) => {
   try {
-    deleteVpnPeer(req.params.peerId);
+    await deleteVpnPeer(req.params.peerId);
     appendAudit("vpn.peer.delete", `Deleted VPN peer ${req.params.peerId}`, "admin");
     res.status(204).end();
   } catch (error) {
@@ -429,6 +481,50 @@ router.get("/files", (req, res) => {
   }
 });
 
+router.post("/files/folders", (req, res) => {
+  const parsed = folderSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  try {
+    appendAudit("file.folder.create", `Created folder ${parsed.data.name}`, "admin");
+    res.status(201).json(createFolder(parsed.data.parentPath, parsed.data.name));
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to create folder" });
+  }
+});
+
+router.post("/files/move", (req, res) => {
+  const parsed = moveSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  try {
+    const target = movePath(parsed.data.sourcePath, parsed.data.destinationDir);
+    appendAudit("file.move", `Moved ${parsed.data.sourcePath} to ${target}`, "admin");
+    res.json({ target });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to move path" });
+  }
+});
+
+router.delete("/files", (req, res) => {
+  const parsed = deleteSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  try {
+    deletePath(parsed.data.targetPath);
+    appendAudit("file.delete", `Deleted ${parsed.data.targetPath}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to delete path" });
+  }
+});
+
 router.post("/files/upload", upload.single("file"), (req, res) => {
   if (!req.file) {
     res.status(400).json({ error: "File missing" });
@@ -480,6 +576,23 @@ router.post("/downloads", async (req, res) => {
   }
 
   res.status(201).json(await enqueueDownload(parsed.data.url, parsed.data.targetName));
+});
+
+router.post("/downloads/:id/retry", async (req, res) => {
+  const existing = stateStore.getState().downloads.find((item) => item.id === req.params.id);
+  if (!existing) {
+    res.status(404).json({ error: "Download not found" });
+    return;
+  }
+  res.status(201).json(await enqueueDownload(existing.url, path.basename(existing.targetPath)));
+});
+
+router.delete("/downloads/:id", (req, res) => {
+  stateStore.update((draft) => {
+    draft.downloads = draft.downloads.filter((item) => item.id !== req.params.id);
+  });
+  appendAudit("download.delete", `Deleted download record ${req.params.id}`, "admin");
+  res.status(204).end();
 });
 
 router.get("/media", (_req, res) => {
