@@ -200,29 +200,32 @@ input {
   position: sticky;
   top: 0.8rem;
   z-index: 20;
-  padding: 0.9rem 1rem;
+  padding: 0.95rem 1.1rem;
   border-radius: 24px;
   background: rgba(255, 255, 255, 0.84);
   border: 1px solid var(--line);
-  display: flex;
-  gap: 1rem;
-  align-items: flex-start;
-  justify-content: space-between;
+  display: grid;
+  gap: 0.8rem;
   backdrop-filter: blur(20px);
   box-shadow: 0 16px 34px rgba(92, 105, 143, 0.12);
 }
-.vpn-navbar-main,
-.vpn-navbar-meta {
-  display: grid;
-  gap: 0.7rem;
+.vpn-navbar-row {
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+  align-items: center;
+}
+.vpn-navbar-row-bottom {
+  align-items: flex-start;
 }
 .vpn-navbar-main {
-  flex: 1 1 auto;
-  min-width: 0;
+  display: contents;
 }
 .vpn-navbar-meta {
-  flex: 0 1 auto;
+  display: grid;
+  gap: 0.65rem;
   justify-items: end;
+  align-content: start;
 }
 .vpn-navbar-brand strong {
   display: block;
@@ -242,13 +245,17 @@ input {
   display: flex;
   gap: 0.6rem;
   flex-wrap: wrap;
+  align-items: center;
+  flex: 1 1 auto;
 }
 .vpn-navbar-link {
-  background: #f2f4fb;
+  background: #f4f6fd;
   color: var(--ink);
   box-shadow: none;
   border-radius: 14px;
-  padding: 0.72rem 0.95rem;
+  padding: 0.62rem 0.9rem;
+  border: 1px solid transparent;
+  font-weight: 600;
 }
 .vpn-navbar-link.active {
   background: linear-gradient(90deg, #6e66ff, #32cec9);
@@ -261,8 +268,9 @@ input {
   justify-content: flex-end;
 }
 .vpn-navbar-chip {
+  min-width: 108px;
   border-radius: 16px;
-  padding: 0.65rem 0.85rem;
+  padding: 0.55rem 0.78rem;
   background: #f8f9fd;
   border: 1px solid var(--line);
 }
@@ -278,11 +286,18 @@ input {
 .vpn-room-topbar { display: none; }
 .vpn-top-actions {
   display: flex;
-  gap: 0.6rem;
+  gap: 0.5rem;
   flex-wrap: wrap;
+  justify-content: flex-end;
 }
 .vpn-top-actions-navbar .alt-button {
   box-shadow: none;
+  padding: 0.56rem 0.82rem;
+  border-radius: 12px;
+  font-size: 0.92rem;
+}
+.vpn-top-actions-navbar .alt-button:last-child {
+  display: none;
 }
 .alt-button,
 .small-button {
@@ -718,7 +733,10 @@ input {
 @media (max-width: 1080px) {
   .dashboard-shell, .login-panel { grid-template-columns: 1fr; }
   .content-grid { grid-template-columns: 1fr; }
-  .vpn-room-navbar { position: static; flex-direction: column; align-items: flex-start; }
+  .vpn-room-navbar {
+    position: static;
+  }
+  .vpn-navbar-row { flex-direction: column; align-items: flex-start; }
   .vpn-navbar-meta { justify-items: start; width: 100%; }
   .vpn-navbar-stats { justify-content: flex-start; }
   .vpn-mini-strip,

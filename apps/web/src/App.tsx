@@ -593,11 +593,14 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
           <section className="vpn-room">
             <div className="vpn-room-main">
               <section className="vpn-room-navbar">
-                <div className="vpn-navbar-brand">
-                  <strong>WireOS</strong>
+                <div className="vpn-navbar-row vpn-navbar-row-top">
+                  <div className="vpn-navbar-brand">
+                    <strong>WireOS</strong>
                   <p>{vpn.interface.name} · {vpn.configPath}</p>
                 </div>
-                <nav className="vpn-navbar-links">
+                </div>
+                <div className="vpn-navbar-row vpn-navbar-row-bottom">
+                  <nav className="vpn-navbar-links">
                   <button className="vpn-navbar-link active" onClick={() => jumpVpn("vpn-overview")}>Overview</button>
                   <button className="vpn-navbar-link" onClick={() => jumpVpn("vpn-provision")}>Provision Client</button>
                   <button className="vpn-navbar-link" onClick={() => jumpVpn("vpn-peers")}>Peers</button>
@@ -618,6 +621,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
                     <div className="vpn-navbar-chip"><span>Latest Sync</span><strong>{vpn.stats.latestHandshake}</strong></div>
                     <div className="vpn-navbar-chip"><span>Host</span><strong>{vpn.system?.hostname ?? "Unknown"}</strong></div>
                   </div>
+                </div>
                 </div>
               </section>
 
