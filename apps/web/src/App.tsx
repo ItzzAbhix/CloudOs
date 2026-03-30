@@ -231,7 +231,9 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
   );
 
   const vpnAnalyticsView = useMemo(() => {
-    const points = (vpn?.analytics ?? []).slice(-8);
+    const points = (vpn?.analytics ?? [])
+      .filter((point) => Number.isFinite(point.timestamp) && Number.isFinite(point.rxBytes) && Number.isFinite(point.txBytes))
+      .slice(-8);
     if (!points.length) return null;
     const rxMax = Math.max(...points.map((point) => point.rxBytes), 1);
     const txMax = Math.max(...points.map((point) => point.txBytes), 1);
@@ -291,6 +293,12 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
       .sort((left, right) => right.totalBytes - left.totalBytes)
       .map((peer) => ({ ...peer, usagePercent: Math.max(8, Math.round((peer.totalBytes / max) * 100)) }));
   }, [vpn]);
+
+  function jumpVpn(sectionId: string) {
+    const target = document.getElementById(sectionId);
+    if (!target) return;
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
 
   async function serviceAction(id: string, action: "restart") {
     await api(`/services/${id}/action`, { method: "POST", body: JSON.stringify({ action }) });
@@ -587,20 +595,29 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
               <section className="vpn-room-navbar">
                 <div className="vpn-navbar-brand">
                   <strong>WireOS</strong>
-                  <p>Control WireGuard from a single panel</p>
+                  <p>{vpn.interface.name} · {vpn.configPath}</p>
                 </div>
                 <nav className="vpn-navbar-links">
-                  <button className="vpn-navbar-link active">Overview</button>
-                  <button className="vpn-navbar-link">Provision Client</button>
-                  <button className="vpn-navbar-link">Peers</button>
-                  <button className="vpn-navbar-link">Server Defaults</button>
-                  <button className="vpn-navbar-link">Config Editor</button>
+                  <button className="vpn-navbar-link active" onClick={() => jumpVpn("vpn-overview")}>Overview</button>
+                  <button className="vpn-navbar-link" onClick={() => jumpVpn("vpn-provision")}>Provision Client</button>
+                  <button className="vpn-navbar-link" onClick={() => jumpVpn("vpn-peers")}>Peers</button>
+                  <button className="vpn-navbar-link" onClick={() => jumpVpn("vpn-defaults")}>Server Defaults</button>
+                  <button className="vpn-navbar-link" onClick={() => jumpVpn("vpn-config")}>Config Editor</button>
                 </nav>
-                <div className="vpn-navbar-stats">
-                  <div className="vpn-navbar-chip"><span>Interface</span><strong>{vpn.interface.up ? "Up" : "Down"}</strong></div>
-                  <div className="vpn-navbar-chip"><span>Online Peers</span><strong>{vpnPeerStats.online}</strong></div>
-                  <div className="vpn-navbar-chip"><span>Latest Sync</span><strong>{vpn.stats.latestHandshake}</strong></div>
-                  <div className="vpn-navbar-chip"><span>Host</span><strong>{vpn.system?.hostname ?? "Unknown"}</strong></div>
+                <div className="vpn-navbar-meta">
+                  <div className="vpn-top-actions vpn-top-actions-navbar">
+                    <button className="alt-button" onClick={() => vpnInterfaceAction("start")}>Start</button>
+                    <button className="alt-button" onClick={() => vpnInterfaceAction("stop")}>Stop</button>
+                    <button className="alt-button" onClick={() => vpnInterfaceAction("restart")}>Restart</button>
+                    <button className="alt-button" onClick={() => vpnInterfaceAction("reload")}>Apply Config</button>
+                    <button className="alt-button" onClick={() => vpnInterfaceAction("save")}>Save Runtime</button>
+                  </div>
+                  <div className="vpn-navbar-stats">
+                    <div className="vpn-navbar-chip"><span>Interface</span><strong>{vpn.interface.up ? "Up" : "Down"}</strong></div>
+                    <div className="vpn-navbar-chip"><span>Online Peers</span><strong>{vpnPeerStats.online}</strong></div>
+                    <div className="vpn-navbar-chip"><span>Latest Sync</span><strong>{vpn.stats.latestHandshake}</strong></div>
+                    <div className="vpn-navbar-chip"><span>Host</span><strong>{vpn.system?.hostname ?? "Unknown"}</strong></div>
+                  </div>
                 </div>
               </section>
 
@@ -622,7 +639,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
               {vpn.error ? <div className="vpn-error-banner">{vpn.error}</div> : null}
 
               <div className="vpn-room-grid">
-                <section className="vpn-card vpn-card-hero">
+                <section id="vpn-overview" className="vpn-card vpn-card-hero vpn-anchor-card">
                   <div className="vpn-card-gradient">
                     <span>Network posture</span>
                     <h3>{vpn.stats.onlinePeers}/{vpn.stats.totalPeers} peers active</h3>
@@ -716,15 +733,34 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
                           <strong>{peer.name}</strong>
                           <span>{peer.totalHuman}</span>
                         </div>
+                        <div className="vpn-device-usage-split">
+                          <div className="vpn-device-split-track">
+                            <div
+                              className="vpn-device-split-fill rx"
+                              style={{ width: `${Math.max(6, Math.round((parseHumanBytes(peer.rxHuman) / Math.max(peer.totalBytes, 1)) * 100))}%` }}
+                            />
+                          </div>
+                          <div className="vpn-device-split-track">
+                            <div
+                              className="vpn-device-split-fill tx"
+                              style={{ width: `${Math.max(6, Math.round((parseHumanBytes(peer.txHuman) / Math.max(peer.totalBytes, 1)) * 100))}%` }}
+                            />
+                          </div>
+                        </div>
                         <div className="vpn-device-usage-bar">
                           <div className="vpn-device-usage-fill" style={{ width: `${peer.usagePercent}%` }} />
+                        </div>
+                        <div className="vpn-device-usage-meta">
+                          <span>Rx {peer.rxHuman}</span>
+                          <span>Tx {peer.txHuman}</span>
+                          <span>{peer.online ? "Online" : peer.seenBefore ? "Offline" : "Never connected"}</span>
                         </div>
                       </div>
                     ))}
                   </div>
                 </section>
 
-                <section className="vpn-card vpn-card-provision">
+                <section id="vpn-provision" className="vpn-card vpn-card-provision vpn-anchor-card">
                   <div className="vpn-card-head">
                     <h3>Provision Client</h3>
                     <span>Create and ship a new peer</span>
@@ -760,7 +796,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
                   )}
                 </section>
 
-                <section className="vpn-card vpn-card-defaults">
+                <section id="vpn-defaults" className="vpn-card vpn-card-defaults vpn-anchor-card">
                   <div className="vpn-card-head">
                     <h3>Server Defaults</h3>
                     <span>Used for new client profiles</span>
@@ -823,7 +859,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
                   </div>
                 </section>
 
-                <section className="vpn-card vpn-card-config-right">
+                <section id="vpn-config" className="vpn-card vpn-card-config-right vpn-anchor-card">
                   <form className="vpn-form-stack" onSubmit={saveVpnConfig}>
                     <textarea className="config-editor vpn-editor-large" value={vpnConfigText} onChange={(event) => setVpnConfigText(event.target.value)} />
                     <div className="button-row">
@@ -833,7 +869,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
                   </form>
                 </section>
 
-                <section className="vpn-card vpn-card-peers">
+                <section id="vpn-peers" className="vpn-card vpn-card-peers vpn-anchor-card">
                   <div className="vpn-card-head">
                     <h3>Peer Inventory</h3>
                     <span>Rename, inspect, and remove peers</span>

@@ -118,7 +118,27 @@ function normalizeRemoteDashboard(payload: any): VpnDashboardData {
       peerId: item.peer_id,
       clientConfig: item.client_config
     })),
-    analytics: payload.analytics ?? [],
+    analytics: (payload.analytics ?? []).map((point: any) => ({
+      timestamp:
+        typeof point.timestamp === "number"
+          ? point.timestamp
+          : typeof point.ts === "number"
+            ? point.ts * 1000
+            : Date.now(),
+      onlinePeers: point.onlinePeers ?? point.online ?? 0,
+      rxBytes:
+        typeof point.rxBytes === "number"
+          ? point.rxBytes
+          : typeof point.rx_mb === "number"
+            ? point.rx_mb * 1024 * 1024
+            : 0,
+      txBytes:
+        typeof point.txBytes === "number"
+          ? point.txBytes
+          : typeof point.tx_mb === "number"
+            ? point.tx_mb * 1024 * 1024
+            : 0
+    })),
     configText: payload.config_text ?? "",
     configPath: payload.config_path ?? config.vpnConfigPath,
     generatedAt: payload.generated_at ?? new Date().toLocaleString(),
