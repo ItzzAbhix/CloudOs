@@ -150,81 +150,113 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [vpnDefaultsDirty, setVpnDefaultsDirty] = useState(false);
   const [vpnConfigDirty, setVpnConfigDirty] = useState(false);
   const [vpnPeerNameDrafts, setVpnPeerNameDrafts] = useState<Record<string, string>>({});
+  const [dashboardError, setDashboardError] = useState("");
 
   async function refresh() {
-    const [
-      overviewResult,
-      servicesResult,
-      devicesResult,
-      filesResult,
-      downloadsResult,
-      mediaResult,
-      workflowsResult,
-      rulesResult,
-      notificationsResult,
-      analyticsResult,
-      vpnResult,
-      networkResult,
-      shareResult,
-      scriptsResult
-    ] = await Promise.all([
-      api<Overview>("/overview"),
-      api<Service[]>("/services"),
-      api<Device[]>("/devices"),
-      api<{ currentPath: string; entries: FileEntry[] }>("/files"),
-      api<Download[]>("/downloads"),
-      api<Media[]>("/media"),
-      api<Workflow[]>("/automation/workflows"),
-      api<Workflow[]>("/automation/rules"),
-      api<NotificationTarget[]>("/notifications"),
-      api<Analytics>("/analytics"),
-      api<VpnDashboard>("/vpn/dashboard"),
-      api<Array<{ id: string; source: string; message: string; severity: string }>>("/security/network"),
-      api<Array<{ id: string; path: string; expiresAt?: string }>>("/sharing"),
-      api<Array<{ id: string; name: string; command: string; description: string }>>("/scripts")
-    ]);
-    setOverview(overviewResult);
-    setServices(servicesResult);
-    setDevices(devicesResult);
-    setFiles(filesResult);
-    setDownloads(downloadsResult);
-    setMedia(mediaResult);
-    setWorkflows(workflowsResult);
-    setRules(rulesResult);
-    setNotifications(notificationsResult);
-    setAnalytics(analyticsResult);
-    setVpn(vpnResult);
-    if (!vpnDefaultsDirty) {
-      setVpnDefaults({
-        endpoint: vpnResult.defaults.endpoint ?? vpnResult.interface.endpointHint ?? "",
-        dns: vpnResult.defaults.dns ?? "",
-        allowedIps: vpnResult.defaults.allowedIps ?? "",
-        refreshSeconds: String(vpnResult.defaults.refreshSeconds ?? 10)
-      } as never);
-    }
-    setVpnProvision((current) => ({
-      name: current.name,
-      address: current.address || vpnResult.stats.nextIp || "",
-      dns: current.dns || vpnResult.defaults.dns || "",
-      allowedIps: current.allowedIps || vpnResult.defaults.allowedIps || "",
-      endpoint: current.endpoint || vpnResult.interface.endpointHint || "",
-      keepalive: current.keepalive || "25"
-    }));
-    if (!vpnConfigDirty) {
-      setVpnConfigText(vpnResult.configText ?? "");
-    }
-    setVpnPeerNameDrafts((current) => {
-      const next = { ...current };
-      for (const peer of vpnResult.peers) {
-        if (!next[peer.peerId]) {
-          next[peer.peerId] = peer.name;
-        }
+    const requests = [
+      ["overview", api<Overview>("/overview")],
+      ["services", api<Service[]>("/services")],
+      ["devices", api<Device[]>("/devices")],
+      ["files", api<{ currentPath: string; entries: FileEntry[] }>("/files")],
+      ["downloads", api<Download[]>("/downloads")],
+      ["media", api<Media[]>("/media")],
+      ["workflows", api<Workflow[]>("/automation/workflows")],
+      ["rules", api<Workflow[]>("/automation/rules")],
+      ["notifications", api<NotificationTarget[]>("/notifications")],
+      ["analytics", api<Analytics>("/analytics")],
+      ["vpn", api<VpnDashboard>("/vpn/dashboard")],
+      ["network", api<Array<{ id: string; source: string; message: string; severity: string }>>("/security/network")],
+      ["sharing", api<Array<{ id: string; path: string; expiresAt?: string }>>("/sharing")],
+      ["scripts", api<Array<{ id: string; name: string; command: string; description: string }>>("/scripts")]
+    ] as const;
+    const results = await Promise.allSettled(requests.map(([, request]) => request));
+    const failed: string[] = [];
+
+    results.forEach((result, index) => {
+      const key = requests[index]?.[0];
+      if (!key) return;
+      if (result.status === "rejected") {
+        failed.push(key);
+        return;
       }
-      return next;
+
+      switch (key) {
+        case "overview":
+          setOverview(result.value as Overview);
+          break;
+        case "services":
+          setServices(result.value as Service[]);
+          break;
+        case "devices":
+          setDevices(result.value as Device[]);
+          break;
+        case "files":
+          setFiles(result.value as { currentPath: string; entries: FileEntry[] });
+          break;
+        case "downloads":
+          setDownloads(result.value as Download[]);
+          break;
+        case "media":
+          setMedia(result.value as Media[]);
+          break;
+        case "workflows":
+          setWorkflows(result.value as Workflow[]);
+          break;
+        case "rules":
+          setRules(result.value as Workflow[]);
+          break;
+        case "notifications":
+          setNotifications(result.value as NotificationTarget[]);
+          break;
+        case "analytics":
+          setAnalytics(result.value as Analytics);
+          break;
+        case "vpn": {
+          const vpnResult = result.value as VpnDashboard;
+          setVpn(vpnResult);
+          if (!vpnDefaultsDirty) {
+            setVpnDefaults({
+              endpoint: vpnResult.defaults.endpoint ?? vpnResult.interface.endpointHint ?? "",
+              dns: vpnResult.defaults.dns ?? "",
+              allowedIps: vpnResult.defaults.allowedIps ?? "",
+              refreshSeconds: String(vpnResult.defaults.refreshSeconds ?? 10)
+            } as never);
+          }
+          setVpnProvision((current) => ({
+            name: current.name,
+            address: current.address || vpnResult.stats.nextIp || "",
+            dns: current.dns || vpnResult.defaults.dns || "",
+            allowedIps: current.allowedIps || vpnResult.defaults.allowedIps || "",
+            endpoint: current.endpoint || vpnResult.interface.endpointHint || "",
+            keepalive: current.keepalive || "25"
+          }));
+          if (!vpnConfigDirty) {
+            setVpnConfigText(vpnResult.configText ?? "");
+          }
+          setVpnPeerNameDrafts((current) => {
+            const next = { ...current };
+            for (const peer of vpnResult.peers) {
+              if (!next[peer.peerId]) {
+                next[peer.peerId] = peer.name;
+              }
+            }
+            return next;
+          });
+          break;
+        }
+        case "network":
+          setNetworkEvents(result.value as Array<{ id: string; source: string; message: string; severity: string }>);
+          break;
+        case "sharing":
+          setShareLinks(result.value as Array<{ id: string; path: string; expiresAt?: string }>);
+          break;
+        case "scripts":
+          setScripts(result.value as Array<{ id: string; name: string; command: string; description: string }>);
+          break;
+      }
     });
-    setNetworkEvents(networkResult);
-    setShareLinks(shareResult);
-    setScripts(scriptsResult);
+
+    setDashboardError(failed.length ? `Some modules failed to load: ${failed.join(", ")}` : "");
   }
 
   useEffect(() => {
@@ -545,6 +577,8 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
             </div>
           ) : null}
         </header>
+
+        {dashboardError ? <div className="vpn-error-banner">{dashboardError}</div> : null}
 
         <section className="headline-grid">
           {headlineCards.map(([title, value, tone]) => (
