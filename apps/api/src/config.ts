@@ -30,5 +30,8 @@ export const config = {
   vpnRefreshSeconds: Number(process.env.WG_REFRESH_SECONDS ?? 10),
   vpnUseSudo: process.env.WG_USE_SUDO === "1",
   vpnRemoteUrl: process.env.CLOUDOS_VPN_REMOTE_URL ?? "",
-  vpnAgentToken: process.env.CLOUDOS_VPN_AGENT_TOKEN ?? ""
+  vpnAgentToken: process.env.CLOUDOS_VPN_AGENT_TOKEN ?? "",
+  pterodactylUrl: process.env.CLOUDOS_PTERODACTYL_URL ?? "",
+  pterodactylApplicationApiKey: process.env.CLOUDOS_PTERODACTYL_APPLICATION_API_KEY ?? "",
+  pterodactylClientApiKey: process.env.CLOUDOS_PTERODACTYL_CLIENT_API_KEY ?? ""
 };

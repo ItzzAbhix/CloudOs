@@ -5,6 +5,7 @@ import multer from "multer";
 import { z } from "zod";
 import { authMiddleware, createSessionToken, login } from "./auth.js";
 import { config } from "./config.js";
+import { getGamesDashboard, performGamePowerAction } from "./games.js";
 import { appendAudit, createFolder, deletePath, enqueueDownload, getOverview, getServiceLogs, getServices, listFiles, movePath, runServiceAction, scanMediaLibrary } from "./system.js";
 import { stateStore } from "./store.js";
 import {
@@ -114,6 +115,7 @@ const vpnRenameSchema = z.object({ name: z.string().min(1) });
 const vpnUpdatePeerSchema = z.object({ allowedIps: z.string().min(1), keepalive: z.string().optional().default("") });
 const vpnBlockSchema = z.object({ minutes: z.number().int().min(1).default(30) });
 const vpnRestoreSchema = z.object({ path: z.string().min(1) });
+const gamePowerSchema = z.object({ signal: z.enum(["start", "stop", "restart", "kill"]) });
 
 const upload = multer({ dest: config.filesRoot });
 
@@ -776,9 +778,22 @@ router.post("/scripts/run", async (req, res) => {
   });
 });
 
-router.get("/games", (_req, res) => {
-  res.json({
-    enabled: false,
-    servers: []
-  });
+router.get("/games", async (_req, res) => {
+  res.json(await getGamesDashboard());
+});
+
+router.post("/games/servers/:identifier/power", async (req, res) => {
+  const parsed = gamePowerSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  try {
+    await performGamePowerAction(req.params.identifier, parsed.data.signal);
+    appendAudit("games.power", `Sent ${parsed.data.signal} to game server ${req.params.identifier}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to control game server" });
+  }
 });

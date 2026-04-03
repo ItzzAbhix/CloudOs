@@ -667,6 +667,41 @@ input {
   border: 1px solid var(--line);
   background: linear-gradient(180deg, #fff, #f8faff);
 }
+.game-summary-grid,
+.game-server-grid,
+.game-node-grid {
+  display: grid;
+  gap: 1rem;
+}
+.game-summary-grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  margin-bottom: 1rem;
+}
+.game-metric-grid {
+  margin-bottom: 1rem;
+}
+.game-server-grid {
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+.game-node-grid {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+.game-server-card {
+  display: grid;
+  gap: 0.9rem;
+}
+.game-server-meta,
+.game-server-usage {
+  display: grid;
+  gap: 0.2rem;
+}
+.game-power-row > button {
+  flex: 1 1 120px;
+}
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
 .darkish {
   background: rgba(255, 255, 255, 0.14);
   border-color: rgba(255, 255, 255, 0.18);
