@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
+import { GameControlPlane } from "./components/GameControlPlane";
 
 type User = { id: string; username: string; role: "admin" | "user" };
 type Overview = {
@@ -379,18 +380,6 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
       .map((peer) => ({ ...peer, usagePercent: Math.max(8, Math.round((peer.totalBytes / max) * 100)) }));
   }, [vpn]);
 
-  const gameFleet = useMemo(() => {
-    const servers = games?.servers ?? [];
-    return {
-      totalMemoryLimit: servers.reduce((sum, server) => sum + server.limits.memoryMb, 0),
-      totalDiskLimit: servers.reduce((sum, server) => sum + server.limits.diskMb, 0),
-      totalMemoryUsed: servers.reduce((sum, server) => sum + (server.usage?.memoryMb ?? 0), 0),
-      totalDiskUsed: servers.reduce((sum, server) => sum + (server.usage?.diskMb ?? 0), 0),
-      totalNetworkRx: servers.reduce((sum, server) => sum + (server.usage?.networkRxMb ?? 0), 0),
-      totalNetworkTx: servers.reduce((sum, server) => sum + (server.usage?.networkTxMb ?? 0), 0)
-    };
-  }, [games]);
-
   function jumpVpn(sectionId: string) {
     const target = document.getElementById(sectionId);
     if (!target) return;
@@ -399,14 +388,6 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
 
   async function serviceAction(id: string, action: "restart") {
     await api(`/services/${id}/action`, { method: "POST", body: JSON.stringify({ action }) });
-    await refresh();
-  }
-
-  async function gamePowerAction(identifier: string, signal: "start" | "stop" | "restart" | "kill") {
-    await api(`/games/servers/${identifier}/power`, {
-      method: "POST",
-      body: JSON.stringify({ signal })
-    });
     await refresh();
   }
 
@@ -1197,109 +1178,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
           </section>
         ) : null}
 
-        {activeTab === "games" ? (
-          <section className="content-grid">
-            <Panel title="Game Control Plane" wide>
-              {games?.error ? <div className="vpn-error-banner">{games.error}</div> : null}
-              <div className="game-summary-grid">
-                <div className="mini-surface">
-                  <span className="eyebrow">Provider</span>
-                  <strong>Pterodactyl</strong>
-                  <p>{games?.configured ? (games.panel.reachable ? "Panel connected" : "Panel unreachable") : "Configuration missing"}</p>
-                </div>
-                <div className="mini-surface">
-                  <span className="eyebrow">Servers</span>
-                  <strong>{games?.summary.totalServers ?? 0}</strong>
-                  <p>{games?.summary.runningServers ?? 0} running</p>
-                </div>
-                <div className="mini-surface">
-                  <span className="eyebrow">Nodes</span>
-                  <strong>{games?.summary.nodes ?? 0}</strong>
-                  <p>{games?.summary.suspendedServers ?? 0} suspended</p>
-                </div>
-                <div className="mini-surface">
-                  <span className="eyebrow">Traffic</span>
-                  <strong>{gameFleet.totalNetworkRx.toFixed(1)} / {gameFleet.totalNetworkTx.toFixed(1)} MB</strong>
-                  <p>Rx / Tx across live servers</p>
-                </div>
-              </div>
-
-              {games?.servers.length ? (
-                <>
-                  <div className="content-grid game-metric-grid">
-                    <Panel title="Memory">
-                      <Bar label="Used" value={Math.round(gameFleet.totalMemoryUsed)} />
-                      <Bar label="Limit" value={Math.round(gameFleet.totalMemoryLimit)} />
-                    </Panel>
-                    <Panel title="Disk">
-                      <Bar label="Used" value={Math.round(gameFleet.totalDiskUsed)} />
-                      <Bar label="Limit" value={Math.round(gameFleet.totalDiskLimit)} />
-                    </Panel>
-                    <Panel title="Nodes">
-                      <div className="game-node-grid">
-                        {(games?.nodes ?? []).map((node) => (
-                          <div key={node.id} className="mini-surface">
-                            <strong>{node.name}</strong>
-                            <p>{node.scheme}://{node.fqdn}</p>
-                            <span className={`badge ${node.maintenanceMode ? "warn" : "good"}`}>
-                              {node.maintenanceMode ? "Maintenance" : "Healthy"}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </Panel>
-                  </div>
-
-                  <div className="game-server-grid">
-                    {(games?.servers ?? []).map((server) => (
-                      <div key={server.id} className="service-card game-server-card">
-                        <div className="service-top">
-                          <div>
-                            <strong>{server.name}</strong>
-                            <p>{server.description || "No description"}</p>
-                          </div>
-                          <span className={`badge ${
-                            server.suspended ? "warn" : server.powerState === "running" ? "good" : "neutral"
-                          }`}>
-                            {server.suspended ? "Suspended" : server.powerState}
-                          </span>
-                        </div>
-                        <div className="game-server-meta">
-                          <Row label="Node" value={server.node} />
-                          <Row label="Allocation" value={server.allocation} />
-                          <Row label="CPU Limit" value={`${server.limits.cpuPercent || 0}%`} />
-                          <Row label="Memory Limit" value={`${server.limits.memoryMb || 0} MB`} />
-                          <Row label="Disk Limit" value={`${server.limits.diskMb || 0} MB`} />
-                          <Row label="Identifier" value={server.identifier} />
-                        </div>
-                        {server.usage ? (
-                          <div className="game-server-usage">
-                            <Bar label="Memory Used" value={Math.round(server.usage.memoryMb)} />
-                            <Bar label="Disk Used" value={Math.round(server.usage.diskMb)} />
-                            <Bar label="Network Rx" value={Math.round(server.usage.networkRxMb)} />
-                            <Bar label="Network Tx" value={Math.round(server.usage.networkTxMb)} />
-                            <Row label="CPU Usage" value={`${server.usage.cpuPercent}%`} />
-                            <Row label="Uptime" value={`${Math.round(server.usage.uptimeSeconds / 60)} min`} />
-                          </div>
-                        ) : (
-                          <p className="subcopy">Live resource metrics require a Pterodactyl client API key.</p>
-                        )}
-                        <div className="button-row game-power-row">
-                          <button disabled={!games?.powerActionsEnabled} onClick={() => gamePowerAction(server.identifier, "start")}>Start</button>
-                          <button disabled={!games?.powerActionsEnabled} onClick={() => gamePowerAction(server.identifier, "stop")}>Stop</button>
-                          <button disabled={!games?.powerActionsEnabled} onClick={() => gamePowerAction(server.identifier, "restart")}>Restart</button>
-                          <button disabled={!games?.powerActionsEnabled} onClick={() => gamePowerAction(server.identifier, "kill")}>Kill</button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              ) : (
-                <p className="subcopy">No game servers discovered yet.</p>
-              )}
-            </Panel>
-          </section>
-        ) : null}
+        {activeTab === "games" ? <GameControlPlane games={games} refresh={refresh} /> : null}
       </main>
     </div>
   );

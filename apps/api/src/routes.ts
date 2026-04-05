@@ -5,7 +5,26 @@ import multer from "multer";
 import { z } from "zod";
 import { authMiddleware, createSessionToken, login } from "./auth.js";
 import { config } from "./config.js";
-import { getGamesDashboard, performGamePowerAction } from "./games.js";
+import {
+  createGameServerBackup,
+  createGameServer,
+  createGameServerFolder,
+  deleteGameServerFiles,
+  getGamesDashboard,
+  getGameCreateCatalog,
+  getGameEggTemplate,
+  getGameServerConsoleWebsocket,
+  getGameServerDetail,
+  getGameServerFileContents,
+  getGameServerFiles,
+  performGamePowerAction,
+  reinstallGameServer,
+  renameGameServer,
+  saveGameServerFileContents,
+  sendGameServerCommand,
+  updateGameServerDockerImage,
+  updateGameServerStartupVariable
+} from "./games.js";
 import { appendAudit, createFolder, deletePath, enqueueDownload, getOverview, getServiceLogs, getServices, listFiles, movePath, runServiceAction, scanMediaLibrary } from "./system.js";
 import { stateStore } from "./store.js";
 import {
@@ -116,6 +135,39 @@ const vpnUpdatePeerSchema = z.object({ allowedIps: z.string().min(1), keepalive:
 const vpnBlockSchema = z.object({ minutes: z.number().int().min(1).default(30) });
 const vpnRestoreSchema = z.object({ path: z.string().min(1) });
 const gamePowerSchema = z.object({ signal: z.enum(["start", "stop", "restart", "kill"]) });
+const gameCommandSchema = z.object({ command: z.string().min(1) });
+const gameFileWriteSchema = z.object({ path: z.string().min(1), content: z.string() });
+const gameFolderSchema = z.object({ directory: z.string().min(1), name: z.string().min(1) });
+const gameDeleteFilesSchema = z.object({ directory: z.string().min(1), files: z.array(z.string().min(1)).min(1) });
+const gameBackupSchema = z.object({ name: z.string().optional() });
+const gameStartupVariableSchema = z.object({ key: z.string().min(1), value: z.string() });
+const gameRenameSchema = z.object({ name: z.string().min(1), description: z.string().optional().default("") });
+const gameDockerImageSchema = z.object({ dockerImage: z.string().min(1) });
+const gameCreateServerSchema = z.object({
+  name: z.string().min(1),
+  description: z.string().optional(),
+  userId: z.number().int().positive(),
+  eggId: z.number().int().positive(),
+  dockerImage: z.string().optional(),
+  startup: z.string().optional(),
+  environment: z.record(z.string()),
+  limits: z.object({
+    memory: z.number().int().nonnegative(),
+    disk: z.number().int().nonnegative(),
+    cpu: z.number().int().nonnegative(),
+    swap: z.number().int().optional(),
+    io: z.number().int().optional()
+  }),
+  featureLimits: z.object({
+    databases: z.number().int().nonnegative().optional(),
+    allocations: z.number().int().nonnegative().optional(),
+    backups: z.number().int().nonnegative().optional()
+  }).optional(),
+  allocation: z.object({
+    default: z.number().int().positive(),
+    additional: z.array(z.number().int().positive()).optional()
+  })
+});
 
 const upload = multer({ dest: config.filesRoot });
 
@@ -782,6 +834,199 @@ router.get("/games", async (_req, res) => {
   res.json(await getGamesDashboard());
 });
 
+router.get("/games/catalog", async (_req, res) => {
+  try {
+    res.json(await getGameCreateCatalog());
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to load game catalog" });
+  }
+});
+
+router.get("/games/nests/:nestId/eggs/:eggId", async (req, res) => {
+  try {
+    res.json(await getGameEggTemplate(req.params.nestId, req.params.eggId));
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to load egg template" });
+  }
+});
+
+router.post("/games/servers", async (req, res) => {
+  const parsed = gameCreateServerSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  try {
+    await createGameServer(parsed.data);
+    appendAudit("games.server.create", `Created game server ${parsed.data.name}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to create game server" });
+  }
+});
+
+router.get("/games/servers/:identifier", async (req, res) => {
+  try {
+    res.json(await getGameServerDetail(req.params.identifier));
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to load game server details" });
+  }
+});
+
+router.get("/games/servers/:identifier/console/websocket", async (req, res) => {
+  try {
+    res.json(await getGameServerConsoleWebsocket(req.params.identifier));
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to create console session" });
+  }
+});
+
+router.put("/games/servers/:identifier/startup/variable", async (req, res) => {
+  const parsed = gameStartupVariableSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  try {
+    await updateGameServerStartupVariable(req.params.identifier, parsed.data.key, parsed.data.value);
+    appendAudit("games.startup.update", `Updated ${parsed.data.key} on ${req.params.identifier}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to update startup variable" });
+  }
+});
+
+router.post("/games/servers/:identifier/settings/rename", async (req, res) => {
+  const parsed = gameRenameSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  try {
+    await renameGameServer(req.params.identifier, parsed.data.name, parsed.data.description);
+    appendAudit("games.settings.rename", `Renamed game server ${req.params.identifier}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to rename server" });
+  }
+});
+
+router.post("/games/servers/:identifier/settings/reinstall", async (req, res) => {
+  try {
+    await reinstallGameServer(req.params.identifier);
+    appendAudit("games.settings.reinstall", `Triggered reinstall for ${req.params.identifier}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to reinstall server" });
+  }
+});
+
+router.put("/games/servers/:identifier/settings/docker-image", async (req, res) => {
+  const parsed = gameDockerImageSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  try {
+    await updateGameServerDockerImage(req.params.identifier, parsed.data.dockerImage);
+    appendAudit("games.settings.image", `Updated docker image for ${req.params.identifier}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to update docker image" });
+  }
+});
+
+router.post("/games/servers/:identifier/command", async (req, res) => {
+  const parsed = gameCommandSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  try {
+    await sendGameServerCommand(req.params.identifier, parsed.data.command);
+    appendAudit("games.command", `Sent command to game server ${req.params.identifier}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to send command" });
+  }
+});
+
+router.get("/games/servers/:identifier/files", async (req, res) => {
+  const directory = typeof req.query.directory === "string" ? req.query.directory : "/";
+  try {
+    res.json(await getGameServerFiles(req.params.identifier, directory));
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to load server files" });
+  }
+});
+
+router.get("/games/servers/:identifier/file", async (req, res) => {
+  const filePath = typeof req.query.path === "string" ? req.query.path : "";
+  if (!filePath) {
+    res.status(400).json({ error: "File path is required" });
+    return;
+  }
+
+  try {
+    res.json({ path: filePath, content: await getGameServerFileContents(req.params.identifier, filePath) });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to read server file" });
+  }
+});
+
+router.post("/games/servers/:identifier/file", async (req, res) => {
+  const parsed = gameFileWriteSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  try {
+    await saveGameServerFileContents(req.params.identifier, parsed.data.path, parsed.data.content);
+    appendAudit("games.file.save", `Saved ${parsed.data.path} on game server ${req.params.identifier}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to save server file" });
+  }
+});
+
+router.post("/games/servers/:identifier/files/folders", async (req, res) => {
+  const parsed = gameFolderSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  try {
+    await createGameServerFolder(req.params.identifier, parsed.data.directory, parsed.data.name);
+    appendAudit("games.file.folder", `Created folder ${parsed.data.name} on ${req.params.identifier}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to create folder" });
+  }
+});
+
+router.delete("/games/servers/:identifier/files", async (req, res) => {
+  const parsed = gameDeleteFilesSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  try {
+    await deleteGameServerFiles(req.params.identifier, parsed.data.directory, parsed.data.files);
+    appendAudit("games.file.delete", `Deleted ${parsed.data.files.join(", ")} on ${req.params.identifier}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to delete files" });
+  }
+});
+
 router.post("/games/servers/:identifier/power", async (req, res) => {
   const parsed = gamePowerSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -795,5 +1040,21 @@ router.post("/games/servers/:identifier/power", async (req, res) => {
     res.status(204).end();
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : "Unable to control game server" });
+  }
+});
+
+router.post("/games/servers/:identifier/backups", async (req, res) => {
+  const parsed = gameBackupSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+
+  try {
+    await createGameServerBackup(req.params.identifier, parsed.data.name);
+    appendAudit("games.backup.create", `Created backup for ${req.params.identifier}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to create backup" });
   }
 });

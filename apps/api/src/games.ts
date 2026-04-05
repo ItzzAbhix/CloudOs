@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+import path from "node:path";
 import { config } from "./config.js";
 
 type PterodactylCollection<T> = {
@@ -18,6 +20,7 @@ type ApplicationServer = {
   feature_limits?: { databases?: number; allocations?: number; backups?: number };
   node?: number | string | null;
   allocation?: { ip?: string; alias?: string | null; port?: number | string | null };
+  allocations?: Array<{ ip?: string; alias?: string | null; port?: number | string | null }>;
 };
 
 type ApplicationNode = {
@@ -27,6 +30,57 @@ type ApplicationNode = {
   scheme?: string;
   behind_proxy?: boolean;
   maintenance_mode?: boolean;
+};
+
+type ApplicationAllocation = {
+  id?: number;
+  ip?: string;
+  ip_alias?: string | null;
+  port?: number | string;
+  assigned?: boolean;
+  notes?: string | null;
+};
+
+type ApplicationUser = {
+  id?: number;
+  username?: string;
+  email?: string;
+  first_name?: string;
+  last_name?: string;
+  root_admin?: boolean;
+};
+
+type ApplicationNest = {
+  id?: number;
+  name?: string;
+  description?: string;
+  relationships?: {
+    eggs?: { data?: Array<{ attributes?: ApplicationEgg }> };
+  };
+};
+
+type ApplicationEgg = {
+  id?: number;
+  nest?: number;
+  name?: string;
+  description?: string;
+  docker_image?: string;
+  docker_images?: Record<string, string>;
+  startup?: string;
+  relationships?: {
+    variables?: { data?: Array<{ attributes?: ApplicationEggVariable }> };
+  };
+};
+
+type ApplicationEggVariable = {
+  id?: number;
+  name?: string;
+  description?: string;
+  env_variable?: string;
+  default_value?: string;
+  rules?: string;
+  user_viewable?: boolean;
+  user_editable?: boolean;
 };
 
 type ClientServer = {
@@ -39,7 +93,14 @@ type ClientServer = {
   status?: string | null;
   is_suspended?: boolean;
   is_installing?: boolean;
+  server_owner?: boolean;
+  invocation?: string;
+  docker_image?: string;
   limits?: { memory?: number; disk?: number; cpu?: number };
+  feature_limits?: { databases?: number; allocations?: number; backups?: number };
+  relationships?: {
+    allocations?: { data?: Array<{ attributes?: { ip?: string; alias?: string | null; port?: number | string | null; is_default?: boolean } }> };
+  };
 };
 
 type ClientResource = {
@@ -55,7 +116,90 @@ type ClientResource = {
   };
 };
 
-type GameServerSummary = {
+type ClientStartupVariable = {
+  name?: string;
+  description?: string;
+  env_variable?: string;
+  default_value?: string;
+  server_value?: string;
+  is_editable?: boolean;
+  rules?: string;
+};
+
+type ClientDatabase = {
+  id?: string | number;
+  host?: { address?: string; port?: number | string };
+  name?: string;
+  username?: string;
+  connections_from?: string;
+  max_connections?: number;
+};
+
+type ClientScheduleTask = {
+  id?: number;
+  sequence_id?: number;
+  action?: string;
+  payload?: string;
+  time_offset?: number;
+  continue_on_failure?: boolean;
+};
+
+type ClientSchedule = {
+  id?: number;
+  name?: string;
+  cron?: { minute?: string; hour?: string; day_of_month?: string; month?: string; day_of_week?: string };
+  is_active?: boolean;
+  is_processing?: boolean;
+  only_when_online?: boolean;
+  last_run_at?: string | null;
+  next_run_at?: string | null;
+  relationships?: { tasks?: { data?: Array<{ attributes?: ClientScheduleTask }> } };
+};
+
+type ClientBackup = {
+  uuid?: string;
+  name?: string;
+  ignored_files?: string;
+  checksum?: string | null;
+  bytes?: number;
+  created_at?: string;
+  completed_at?: string | null;
+};
+
+type ClientSubuser = {
+  uuid?: string;
+  username?: string;
+  email?: string;
+  image?: string | null;
+  permissions?: string[];
+  "2fa_enabled"?: boolean;
+};
+
+type ClientActivity = {
+  id?: string;
+  event?: string;
+  is_api?: boolean;
+  description?: string | null;
+  created_at?: string;
+};
+
+type ClientWebsocket = {
+  socket?: string;
+  token?: string;
+};
+
+type ClientFileEntry = {
+  name?: string;
+  mode?: string;
+  size?: number;
+  is_file?: boolean;
+  is_symlink?: boolean;
+  mime?: string;
+  created_at?: string | null;
+  modified_at?: string | null;
+};
+
+export type GameServerSummary = {
   id: string;
   identifier: string;
   uuid: string;
@@ -81,7 +225,7 @@ type GameServerSummary = {
   } | null;
 };
 
-type GamesDashboard = {
+export type GamesDashboard = {
   enabled: boolean;
   provider: "pterodactyl";
   configured: boolean;
@@ -107,12 +251,136 @@ type GamesDashboard = {
   error: string | null;
 };
 
+export type GameServerDetail = {
+  id: string;
+  identifier: string;
+  uuid: string;
+  internalId: number;
+  name: string;
+  description: string;
+  node: string;
+  allocation: string;
+  allocations: string[];
+  suspended: boolean;
+  installing: boolean;
+  powerState: string;
+  dockerImage: string;
+  invocation: string;
+  owner: boolean;
+  limits: {
+    memoryMb: number;
+    diskMb: number;
+    cpuPercent: number;
+  };
+  featureLimits: {
+    databases: number;
+    allocations: number;
+    backups: number;
+  };
+  usage: GameServerSummary["usage"];
+  startupVariables: Array<{
+    name: string;
+    env: string;
+    value: string;
+    defaultValue: string;
+    editable: boolean;
+    rules: string;
+    description: string;
+  }>;
+  databases: Array<{
+    id: string;
+    name: string;
+    username: string;
+    address: string;
+    maxConnections: number;
+  }>;
+  schedules: Array<{
+    id: string;
+    name: string;
+    active: boolean;
+    processing: boolean;
+    onlyWhenOnline: boolean;
+    cron: string;
+    nextRunAt: string;
+    lastRunAt: string;
+    tasks: Array<{
+      id: string;
+      sequenceId: number;
+      action: string;
+      payload: string;
+      timeOffset: number;
+      continueOnFailure: boolean;
+    }>;
+  }>;
+  backups: Array<{
+    id: string;
+    name: string;
+    sizeMb: number;
+    checksum: string;
+    completedAt: string;
+    createdAt: string;
+  }>;
+  users: Array<{
+    id: string;
+    username: string;
+    email: string;
+    permissions: string[];
+    twoFactorEnabled: boolean;
+  }>;
+  activity: Array<{
+    id: string;
+    event: string;
+    description: string;
+    source: string;
+    createdAt: string;
+  }>;
+};
+
+export type GameServerConsoleWebsocket = {
+  socket: string;
+  token: string;
+};
+
+export type GameServerFiles = {
+  currentPath: string;
+  entries: Array<{
+    name: string;
+    path: string;
+    type: "file" | "directory";
+    size: number;
+    mode: string;
+    mimeType: string;
+    createdAt: string;
+    updatedAt: string;
+  }>;
+};
+
+export type GameCreateCatalog = {
+  users: Array<{ id: string; username: string; email: string; name: string }>;
+  nodes: Array<{ id: string; name: string; fqdn: string; allocations: Array<{ id: string; label: string; assigned: boolean }> }>;
+  nests: Array<{ id: string; name: string; eggs: Array<{ id: string; name: string; description: string }> }>;
+};
+
+export type GameEggTemplate = {
+  id: string;
+  nestId: string;
+  name: string;
+  description: string;
+  dockerImage: string;
+  dockerImages: Array<{ label: string; image: string }>;
+  startup: string;
+  variables: Array<{
+    name: string;
+    env: string;
+    defaultValue: string;
+    rules: string;
+    description: string;
+    userEditable: boolean;
+  }>;
+};
+
 function trimTrailingSlash(value: string) {
   return value.replace(/\/+$/, "");
-}
-
-function toRoundedMb(bytes: number) {
-  return Math.round((bytes / (1024 * 1024)) * 10) / 10;
 }
 
 function coerceNumber(value: unknown, fallback = 0) {
@@ -120,15 +388,59 @@ function coerceNumber(value: unknown, fallback = 0) {
   return Number.isFinite(numberValue) ? numberValue : fallback;
 }
 
-function toAllocationString(server?: ApplicationServer) {
-  const ip = server?.allocation?.ip;
-  const alias = server?.allocation?.alias;
-  const host = alias || ip;
-  const port = server?.allocation?.port;
+function toRoundedMb(bytes: number) {
+  return Math.round((bytes / (1024 * 1024)) * 10) / 10;
+}
+
+function toHumanDate(value?: string | null) {
+  return value ?? "Never";
+}
+
+function toAllocationHost(allocation?: { ip?: string; alias?: string | null; port?: number | string | null }) {
+  const host = allocation?.alias || allocation?.ip;
+  const port = allocation?.port;
   if (!host && !port) return "Unassigned";
   if (!host) return `${port ?? "unknown"}`;
   if (!port) return host;
   return `${host}:${port}`;
+}
+
+function toAllocationString(server?: ApplicationServer) {
+  return toAllocationHost(server?.allocation);
+}
+
+function toFeatureLimits(server?: ApplicationServer | ClientServer) {
+  return {
+    databases: coerceNumber(server?.feature_limits?.databases),
+    allocations: coerceNumber(server?.feature_limits?.allocations),
+    backups: coerceNumber(server?.feature_limits?.backups)
+  };
+}
+
+function toUsage(resource: ClientResource | null) {
+  const values = resource?.resources;
+  if (!values) return null;
+  return {
+    memoryMb: toRoundedMb(coerceNumber(values.memory_bytes)),
+    diskMb: toRoundedMb(coerceNumber(values.disk_bytes)),
+    cpuPercent: Math.round(coerceNumber(values.cpu_absolute) * 10) / 10,
+    networkRxMb: toRoundedMb(coerceNumber(values.network_rx_bytes)),
+    networkTxMb: toRoundedMb(coerceNumber(values.network_tx_bytes)),
+    uptimeSeconds: coerceNumber(values.uptime)
+  };
+}
+
+function parsePterodactylError(raw: string, status: number) {
+  try {
+    const payload = JSON.parse(raw) as {
+      errors?: Array<{ detail?: string; code?: string }>;
+      error?: string;
+    };
+    const detail = payload.errors?.[0]?.detail || payload.error;
+    return detail ? `${detail} (${status})` : `Pterodactyl request failed (${status})`;
+  } catch {
+    return raw || `Pterodactyl request failed (${status})`;
+  }
 }
 
 async function pterodactylRequest<T>(scope: "application" | "client", pathname: string, init?: RequestInit) {
@@ -147,16 +459,16 @@ async function pterodactylRequest<T>(scope: "application" | "client", pathname: 
   const response = await fetch(`${trimTrailingSlash(config.pterodactylUrl)}${pathname}`, {
     ...init,
     headers: {
-      Accept: "application/json",
+      Accept: "Application/vnd.pterodactyl.v1+json",
       Authorization: `Bearer ${token}`,
-      ...(init?.body ? { "Content-Type": "application/json" } : {}),
+      ...(init?.body && !(init.body instanceof Buffer) ? { "Content-Type": "application/json" } : {}),
       ...(init?.headers ?? {})
     }
   });
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `Pterodactyl request failed (${response.status})`);
+    throw new Error(parsePterodactylError(text, response.status));
   }
 
   if (response.status === 204) {
@@ -164,6 +476,36 @@ async function pterodactylRequest<T>(scope: "application" | "client", pathname: 
   }
 
   return (await response.json()) as T;
+}
+
+async function pterodactylTextRequest(scope: "application" | "client", pathname: string, init?: RequestInit) {
+  const token = scope === "application" ? config.pterodactylApplicationApiKey : config.pterodactylClientApiKey;
+  if (!config.pterodactylUrl) {
+    throw new Error("CLOUDOS_PTERODACTYL_URL is not configured.");
+  }
+  if (!token) {
+    throw new Error(
+      scope === "application"
+        ? "CLOUDOS_PTERODACTYL_APPLICATION_API_KEY is not configured."
+        : "CLOUDOS_PTERODACTYL_CLIENT_API_KEY is not configured."
+    );
+  }
+
+  const response = await fetch(`${trimTrailingSlash(config.pterodactylUrl)}${pathname}`, {
+    ...init,
+    headers: {
+      Accept: "text/plain, Application/vnd.pterodactyl.v1+json",
+      Authorization: `Bearer ${token}`,
+      ...(init?.headers ?? {})
+    }
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(parsePterodactylError(text, response.status));
+  }
+
+  return response.text();
 }
 
 async function listAllApplicationPages<T>(pathname: string) {
@@ -195,10 +537,42 @@ async function listApplicationNodes() {
   return listAllApplicationPages<ApplicationNode>("/api/application/nodes");
 }
 
+async function listApplicationNodeAllocations(nodeId: string | number) {
+  if (!config.pterodactylApplicationApiKey) return [];
+  return listAllApplicationPages<ApplicationAllocation>(`/api/application/nodes/${nodeId}/allocations`);
+}
+
+async function listApplicationUsers() {
+  if (!config.pterodactylApplicationApiKey) return [];
+  return listAllApplicationPages<ApplicationUser>("/api/application/users");
+}
+
+async function listApplicationNests() {
+  if (!config.pterodactylApplicationApiKey) return [];
+  const payload = await pterodactylRequest<PterodactylCollection<ApplicationNest>>(
+    "application",
+    "/api/application/nests?include=eggs"
+  );
+  return payload.data ?? [];
+}
+
+async function getApplicationEgg(nestId: string | number, eggId: string | number) {
+  const payload = await pterodactylRequest<{ attributes?: ApplicationEgg }>(
+    "application",
+    `/api/application/nests/${nestId}/eggs/${eggId}?include=variables`
+  );
+  return payload.attributes ?? {};
+}
+
 async function listClientServers() {
   if (!config.pterodactylClientApiKey) return [];
   const payload = await pterodactylRequest<PterodactylCollection<ClientServer>>("client", "/api/client");
   return payload.data ?? [];
+}
+
+async function getClientServer(identifier: string) {
+  const payload = await pterodactylRequest<{ attributes?: ClientServer }>("client", `/api/client/servers/${identifier}`);
+  return payload.attributes ?? {};
 }
 
 async function getClientResources(identifier: string) {
@@ -208,6 +582,67 @@ async function getClientResources(identifier: string) {
     `/api/client/servers/${identifier}/resources`
   );
   return payload.attributes ?? null;
+}
+
+async function getClientStartup(identifier: string) {
+  const payload = await pterodactylRequest<{
+    data?: Array<{ attributes?: ClientStartupVariable }>;
+    meta?: { startup_command?: string; docker_image?: string };
+  }>("client", `/api/client/servers/${identifier}/startup`);
+
+  return {
+    variables: payload.data ?? [],
+    startupCommand: payload.meta?.startup_command ?? "",
+    dockerImage: payload.meta?.docker_image ?? ""
+  };
+}
+
+async function getClientDatabases(identifier: string) {
+  const payload = await pterodactylRequest<PterodactylCollection<ClientDatabase>>(
+    "client",
+    `/api/client/servers/${identifier}/databases`
+  );
+  return payload.data ?? [];
+}
+
+async function getClientSchedules(identifier: string) {
+  const payload = await pterodactylRequest<PterodactylCollection<ClientSchedule>>(
+    "client",
+    `/api/client/servers/${identifier}/schedules`
+  );
+  return payload.data ?? [];
+}
+
+async function getClientBackups(identifier: string) {
+  const payload = await pterodactylRequest<PterodactylCollection<ClientBackup>>(
+    "client",
+    `/api/client/servers/${identifier}/backups`
+  );
+  return payload.data ?? [];
+}
+
+async function getClientUsers(identifier: string) {
+  const payload = await pterodactylRequest<PterodactylCollection<ClientSubuser>>(
+    "client",
+    `/api/client/servers/${identifier}/users`
+  );
+  return payload.data ?? [];
+}
+
+async function getClientActivity(identifier: string) {
+  const payload = await pterodactylRequest<PterodactylCollection<ClientActivity>>(
+    "client",
+    `/api/client/servers/${identifier}/activity`
+  );
+  return payload.data ?? [];
+}
+
+async function getClientWebsocket(identifier: string) {
+  const payload = await pterodactylRequest<{ data?: { socket?: string; token?: string } }>(
+    "client",
+    `/api/client/servers/${identifier}/websocket`
+  );
+  return payload.data ?? {};
 }
 
 function mergeServers(
@@ -242,7 +677,6 @@ function mergeServers(
       const applicationServer = applicationLookup.get(identifier);
       const clientServer = clientLookup.get(identifier);
       const resource = resourcesByIdentifier.get(identifier) ?? null;
-      const resourceValues = resource?.resources;
       const node = applicationServer?.node ? nodeLookup.get(String(applicationServer.node)) : undefined;
       const limits = clientServer?.limits ?? applicationServer?.limits;
       const powerState = resource?.current_state ?? clientServer?.status ?? applicationServer?.status ?? "unknown";
@@ -263,19 +697,26 @@ function mergeServers(
           diskMb: coerceNumber(limits?.disk),
           cpuPercent: coerceNumber(limits?.cpu)
         },
-        usage: resourceValues
-          ? {
-              memoryMb: toRoundedMb(coerceNumber(resourceValues.memory_bytes)),
-              diskMb: toRoundedMb(coerceNumber(resourceValues.disk_bytes)),
-              cpuPercent: Math.round(coerceNumber(resourceValues.cpu_absolute) * 10) / 10,
-              networkRxMb: toRoundedMb(coerceNumber(resourceValues.network_rx_bytes)),
-              networkTxMb: toRoundedMb(coerceNumber(resourceValues.network_tx_bytes)),
-              uptimeSeconds: coerceNumber(resourceValues.uptime)
-            }
-          : null
+        usage: toUsage(resource)
       } satisfies GameServerSummary;
     })
     .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function resolveApplicationContext(
+  identifier: string,
+  applicationServers: Array<{ attributes?: ApplicationServer }>,
+  nodes: Array<{ attributes?: ApplicationNode }>
+) {
+  const applicationServer = applicationServers
+    .map((entry) => entry.attributes)
+    .find((entry): entry is ApplicationServer => Boolean(entry?.identifier) && entry?.identifier === identifier);
+
+  const node = nodes
+    .map((entry) => entry.attributes)
+    .find((entry): entry is ApplicationNode => Boolean(entry?.id) && String(entry?.id) === String(applicationServer?.node));
+
+  return { applicationServer, node };
 }
 
 export function isGamesConfigured() {
@@ -364,13 +805,362 @@ export async function getGamesDashboard(): Promise<GamesDashboard> {
   }
 }
 
+export async function getGameServerDetail(identifier: string): Promise<GameServerDetail> {
+  const [clientServer, resource, startup, databases, schedules, backups, users, activity, applicationServers, nodes] =
+    await Promise.all([
+      getClientServer(identifier),
+      getClientResources(identifier),
+      getClientStartup(identifier),
+      getClientDatabases(identifier),
+      getClientSchedules(identifier),
+      getClientBackups(identifier),
+      getClientUsers(identifier),
+      getClientActivity(identifier),
+      listApplicationServers(),
+      listApplicationNodes()
+    ]);
+
+  const { applicationServer, node } = resolveApplicationContext(identifier, applicationServers, nodes);
+  const clientAllocations = clientServer.relationships?.allocations?.data ?? [];
+  const allocations = clientAllocations.length
+    ? clientAllocations.map((entry) => toAllocationHost(entry.attributes))
+    : applicationServer?.allocations?.map((entry) => toAllocationHost(entry)) ?? [];
+  const limits = clientServer.limits ?? applicationServer?.limits;
+
+  return {
+    id: String(applicationServer?.id ?? clientServer.internal_id ?? identifier),
+    identifier,
+    uuid: String(clientServer.uuid ?? applicationServer?.uuid ?? identifier),
+    internalId: coerceNumber(clientServer.internal_id),
+    name: clientServer.name ?? applicationServer?.name ?? identifier,
+    description: clientServer.description ?? applicationServer?.description ?? "",
+    node: clientServer.node ?? node?.name ?? "Unknown node",
+    allocation: toAllocationString(applicationServer),
+    allocations,
+    suspended: Boolean(resource?.is_suspended ?? clientServer.is_suspended ?? applicationServer?.suspended),
+    installing: Boolean(clientServer.is_installing),
+    powerState: resource?.current_state ?? clientServer.status ?? applicationServer?.status ?? "unknown",
+    dockerImage: clientServer.docker_image ?? startup.dockerImage ?? "",
+    invocation: clientServer.invocation ?? startup.startupCommand ?? "",
+    owner: Boolean(clientServer.server_owner),
+    limits: {
+      memoryMb: coerceNumber(limits?.memory),
+      diskMb: coerceNumber(limits?.disk),
+      cpuPercent: coerceNumber(limits?.cpu)
+    },
+    featureLimits: toFeatureLimits(clientServer.identifier ? clientServer : applicationServer),
+    usage: toUsage(resource),
+    startupVariables: startup.variables.map((entry) => ({
+      name: entry.attributes?.name ?? "Unnamed",
+      env: entry.attributes?.env_variable ?? "",
+      value: entry.attributes?.server_value ?? "",
+      defaultValue: entry.attributes?.default_value ?? "",
+      editable: Boolean(entry.attributes?.is_editable),
+      rules: entry.attributes?.rules ?? "",
+      description: entry.attributes?.description ?? ""
+    })),
+    databases: databases.map((entry) => ({
+      id: String(entry.attributes?.id ?? entry.attributes?.name ?? crypto.randomUUID()),
+      name: entry.attributes?.name ?? "",
+      username: entry.attributes?.username ?? "",
+      address: entry.attributes?.host?.address
+        ? `${entry.attributes.host.address}:${entry.attributes.host.port ?? ""}`.replace(/:$/, "")
+        : "Unassigned",
+      maxConnections: coerceNumber(entry.attributes?.max_connections)
+    })),
+    schedules: schedules.map((entry) => ({
+      id: String(entry.attributes?.id ?? crypto.randomUUID()),
+      name: entry.attributes?.name ?? "Unnamed schedule",
+      active: Boolean(entry.attributes?.is_active),
+      processing: Boolean(entry.attributes?.is_processing),
+      onlyWhenOnline: Boolean(entry.attributes?.only_when_online),
+      cron: [
+        entry.attributes?.cron?.minute ?? "*",
+        entry.attributes?.cron?.hour ?? "*",
+        entry.attributes?.cron?.day_of_month ?? "*",
+        entry.attributes?.cron?.month ?? "*",
+        entry.attributes?.cron?.day_of_week ?? "*"
+      ].join(" "),
+      nextRunAt: toHumanDate(entry.attributes?.next_run_at),
+      lastRunAt: toHumanDate(entry.attributes?.last_run_at),
+      tasks: (entry.attributes?.relationships?.tasks?.data ?? []).map((task) => ({
+        id: String(task.attributes?.id ?? crypto.randomUUID()),
+        sequenceId: coerceNumber(task.attributes?.sequence_id),
+        action: task.attributes?.action ?? "",
+        payload: task.attributes?.payload ?? "",
+        timeOffset: coerceNumber(task.attributes?.time_offset),
+        continueOnFailure: Boolean(task.attributes?.continue_on_failure)
+      }))
+    })),
+    backups: backups.map((entry) => ({
+      id: entry.attributes?.uuid ?? crypto.randomUUID(),
+      name: entry.attributes?.name ?? "Backup",
+      sizeMb: toRoundedMb(coerceNumber(entry.attributes?.bytes)),
+      checksum: entry.attributes?.checksum ?? "pending",
+      completedAt: toHumanDate(entry.attributes?.completed_at),
+      createdAt: toHumanDate(entry.attributes?.created_at)
+    })),
+    users: users.map((entry) => ({
+      id: entry.attributes?.uuid ?? crypto.randomUUID(),
+      username: entry.attributes?.username ?? "unknown",
+      email: entry.attributes?.email ?? "",
+      permissions: entry.attributes?.permissions ?? [],
+      twoFactorEnabled: Boolean(entry.attributes?.["2fa_enabled"])
+    })),
+    activity: activity.map((entry) => ({
+      id: entry.attributes?.id ?? crypto.randomUUID(),
+      event: entry.attributes?.event ?? "unknown",
+      description: entry.attributes?.description ?? "",
+      source: entry.attributes?.is_api ? "API" : "Panel",
+      createdAt: toHumanDate(entry.attributes?.created_at)
+    }))
+  };
+}
+
+export async function getGameServerConsoleWebsocket(identifier: string): Promise<GameServerConsoleWebsocket> {
+  const websocket = await getClientWebsocket(identifier);
+  if (!websocket.socket || !websocket.token) {
+    throw new Error("Pterodactyl did not return websocket credentials.");
+  }
+
+  return {
+    socket: websocket.socket,
+    token: websocket.token
+  };
+}
+
 export async function performGamePowerAction(identifier: string, signal: "start" | "stop" | "restart" | "kill") {
-  await pterodactylRequest(
+  await pterodactylRequest("client", `/api/client/servers/${identifier}/power`, {
+    method: "POST",
+    body: JSON.stringify({ signal })
+  });
+}
+
+export async function sendGameServerCommand(identifier: string, command: string) {
+  await pterodactylRequest("client", `/api/client/servers/${identifier}/command`, {
+    method: "POST",
+    body: JSON.stringify({ command })
+  });
+}
+
+export async function createGameServerBackup(identifier: string, name?: string) {
+  await pterodactylRequest("client", `/api/client/servers/${identifier}/backups`, {
+    method: "POST",
+    body: JSON.stringify(name ? { name } : {})
+  });
+}
+
+export async function getGameServerFiles(identifier: string, directory = "/"): Promise<GameServerFiles> {
+  const encodedDirectory = encodeURIComponent(directory);
+  const payload = await pterodactylRequest<PterodactylCollection<ClientFileEntry>>(
     "client",
-    `/api/client/servers/${identifier}/power`,
+    `/api/client/servers/${identifier}/files/list?directory=${encodedDirectory}`
+  );
+
+  return {
+    currentPath: directory,
+    entries: (payload.data ?? []).map((entry) => ({
+      name: entry.attributes?.name ?? "unknown",
+      path: path.posix.join(directory === "/" ? "/" : directory, entry.attributes?.name ?? "unknown"),
+      type: entry.attributes?.is_file ? "file" : "directory",
+      size: coerceNumber(entry.attributes?.size),
+      mode: entry.attributes?.mode ?? "",
+      mimeType: entry.attributes?.mime ?? "",
+      createdAt: toHumanDate(entry.attributes?.created_at),
+      updatedAt: toHumanDate(entry.attributes?.modified_at)
+    }))
+  };
+}
+
+export async function getGameServerFileContents(identifier: string, filePath: string) {
+  return pterodactylTextRequest("client", `/api/client/servers/${identifier}/files/contents?file=${encodeURIComponent(filePath)}`);
+}
+
+export async function saveGameServerFileContents(identifier: string, filePath: string, content: string) {
+  if (!config.pterodactylUrl || !config.pterodactylClientApiKey) {
+    throw new Error("Pterodactyl client API is not configured.");
+  }
+
+  const response = await fetch(
+    `${trimTrailingSlash(config.pterodactylUrl)}/api/client/servers/${identifier}/files/write?file=${encodeURIComponent(filePath)}`,
     {
       method: "POST",
-      body: JSON.stringify({ signal })
+      headers: {
+        Accept: "Application/vnd.pterodactyl.v1+json",
+        Authorization: `Bearer ${config.pterodactylClientApiKey}`,
+        "Content-Type": "text/plain"
+      },
+      body: content
     }
   );
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(parsePterodactylError(text, response.status));
+  }
+}
+
+export async function createGameServerFolder(identifier: string, directory: string, name: string) {
+  await pterodactylRequest("client", `/api/client/servers/${identifier}/files/create-folder`, {
+    method: "POST",
+    body: JSON.stringify({ root: directory, name })
+  });
+}
+
+export async function deleteGameServerFiles(identifier: string, directory: string, files: string[]) {
+  await pterodactylRequest("client", `/api/client/servers/${identifier}/files/delete`, {
+    method: "POST",
+    body: JSON.stringify({ root: directory, files })
+  });
+}
+
+export async function getGameCreateCatalog(): Promise<GameCreateCatalog> {
+  const [users, nodes, nests] = await Promise.all([listApplicationUsers(), listApplicationNodes(), listApplicationNests()]);
+  const nodeAllocations = await Promise.all(
+    nodes
+      .map((entry) => entry.attributes)
+      .filter((entry): entry is ApplicationNode => Boolean(entry?.id))
+      .map(async (node) => [String(node.id), await listApplicationNodeAllocations(String(node.id))] as const)
+  );
+
+  const allocationsByNode = new Map(nodeAllocations);
+
+  return {
+    users: users
+      .map((entry) => entry.attributes)
+      .filter((entry): entry is ApplicationUser => Boolean(entry?.id))
+      .map((entry) => ({
+        id: String(entry.id),
+        username: entry.username ?? "unknown",
+        email: entry.email ?? "",
+        name: [entry.first_name, entry.last_name].filter(Boolean).join(" ") || entry.username || `User ${entry.id}`
+      })),
+    nodes: nodes
+      .map((entry) => entry.attributes)
+      .filter((entry): entry is ApplicationNode => Boolean(entry?.id))
+      .map((entry) => ({
+        id: String(entry.id),
+        name: entry.name ?? `Node ${entry.id}`,
+        fqdn: entry.fqdn ?? "unknown",
+        allocations: (allocationsByNode.get(String(entry.id)) ?? [])
+          .map((allocation) => allocation.attributes)
+          .filter((allocation): allocation is ApplicationAllocation => Boolean(allocation?.id))
+          .map((allocation) => ({
+            id: String(allocation.id),
+            label: `${allocation.ip_alias || allocation.ip}:${allocation.port}`,
+            assigned: Boolean(allocation.assigned)
+          }))
+      })),
+    nests: nests
+      .map((entry) => entry.attributes)
+      .filter((entry): entry is ApplicationNest => Boolean(entry?.id))
+      .map((entry) => ({
+        id: String(entry.id),
+        name: entry.name ?? `Nest ${entry.id}`,
+        eggs: (entry.relationships?.eggs?.data ?? [])
+          .map((egg) => egg.attributes)
+          .filter((egg): egg is ApplicationEgg => Boolean(egg?.id))
+          .map((egg) => ({
+            id: String(egg.id),
+            name: egg.name ?? `Egg ${egg.id}`,
+            description: egg.description ?? ""
+          }))
+      }))
+  };
+}
+
+export async function getGameEggTemplate(nestId: string, eggId: string): Promise<GameEggTemplate> {
+  const egg = await getApplicationEgg(nestId, eggId);
+  const dockerImages = egg.docker_images ? Object.entries(egg.docker_images) : [];
+
+  return {
+    id: String(egg.id ?? eggId),
+    nestId: String(egg.nest ?? nestId),
+    name: egg.name ?? `Egg ${eggId}`,
+    description: egg.description ?? "",
+    dockerImage: egg.docker_image ?? dockerImages[0]?.[1] ?? "",
+    dockerImages: dockerImages.map(([label, image]) => ({ label, image })),
+    startup: egg.startup ?? "",
+    variables: (egg.relationships?.variables?.data ?? [])
+      .map((entry) => entry.attributes)
+      .filter((entry): entry is ApplicationEggVariable => Boolean(entry?.env_variable))
+      .map((entry) => ({
+        name: entry.name ?? entry.env_variable ?? "Variable",
+        env: entry.env_variable ?? "",
+        defaultValue: entry.default_value ?? "",
+        rules: entry.rules ?? "",
+        description: entry.description ?? "",
+        userEditable: Boolean(entry.user_editable)
+      }))
+  };
+}
+
+export async function createGameServer(input: {
+  name: string;
+  description?: string;
+  userId: number;
+  eggId: number;
+  dockerImage?: string;
+  startup?: string;
+  environment: Record<string, string>;
+  limits: { memory: number; disk: number; cpu: number; swap?: number; io?: number };
+  featureLimits?: { databases?: number; allocations?: number; backups?: number };
+  allocation: { default: number; additional?: number[] };
+}) {
+  await pterodactylRequest("application", "/api/application/servers", {
+    method: "POST",
+    body: JSON.stringify({
+      name: input.name,
+      description: input.description ?? "",
+      user: input.userId,
+      egg: input.eggId,
+      docker_image: input.dockerImage,
+      startup: input.startup,
+      environment: input.environment,
+      limits: {
+        memory: input.limits.memory,
+        swap: input.limits.swap ?? 0,
+        disk: input.limits.disk,
+        io: input.limits.io ?? 500,
+        cpu: input.limits.cpu
+      },
+      feature_limits: {
+        databases: input.featureLimits?.databases ?? 0,
+        allocations: input.featureLimits?.allocations ?? 0,
+        backups: input.featureLimits?.backups ?? 0
+      },
+      allocation: {
+        default: input.allocation.default,
+        additional: input.allocation.additional ?? []
+      }
+    })
+  });
+}
+
+export async function updateGameServerStartupVariable(identifier: string, key: string, value: string) {
+  await pterodactylRequest("client", `/api/client/servers/${identifier}/startup/variable`, {
+    method: "PUT",
+    body: JSON.stringify({ key, value })
+  });
+}
+
+export async function renameGameServer(identifier: string, name: string, description = "") {
+  await pterodactylRequest("client", `/api/client/servers/${identifier}/settings/rename`, {
+    method: "POST",
+    body: JSON.stringify({ name, description })
+  });
+}
+
+export async function reinstallGameServer(identifier: string) {
+  await pterodactylRequest("client", `/api/client/servers/${identifier}/settings/reinstall`, {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+}
+
+export async function updateGameServerDockerImage(identifier: string, dockerImage: string) {
+  await pterodactylRequest("client", `/api/client/servers/${identifier}/settings/docker-image`, {
+    method: "PUT",
+    body: JSON.stringify({ docker_image: dockerImage })
+  });
 }
