@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import path from "node:path";
 import { config } from "./config.js";
+import type { ServerResponse } from "node:http";
 
 type PterodactylCollection<T> = {
   data?: Array<{ attributes?: T }>;
@@ -694,7 +695,7 @@ async function getClientNetworkAllocations(identifier: string) {
 async function getClientActivity(identifier: string) {
   const payload = await pterodactylRequest<PterodactylCollection<ClientActivity>>(
     "client",
-    `/api/client/servers/${identifier}/activity`
+    `/api/client/servers/${identifier}/activity?page=1&per_page=100`
   );
   return payload.data ?? [];
 }
@@ -884,6 +885,7 @@ export async function getGameServerDetail(identifier: string): Promise<GameServe
     ]);
 
   const { applicationServer, node } = resolveApplicationContext(identifier, applicationServers, nodes);
+  const relationshipAllocations = clientServer.relationships?.allocations?.data ?? [];
   const allocations = networkAllocations.length
     ? networkAllocations
         .map((entry) => entry.attributes)
@@ -897,15 +899,28 @@ export async function getGameServerDetail(identifier: string): Promise<GameServe
           notes: entry.notes ?? "",
           isDefault: Boolean(entry.is_default)
         }))
-    : (applicationServer?.allocations ?? []).map((entry, index) => ({
-        id: `${applicationServer?.id ?? identifier}-${index}`,
-        label: toAllocationHost(entry),
-        ip: entry.ip ?? "",
-        alias: entry.alias ?? "",
-        port: coerceNumber(entry.port),
-        notes: "",
-        isDefault: index === 0
-      }));
+    : relationshipAllocations.length
+      ? relationshipAllocations
+          .map((entry) => entry.attributes)
+          .filter((entry): entry is { ip?: string; alias?: string | null; port?: number | string | null; is_default?: boolean } => Boolean(entry))
+          .map((entry, index) => ({
+            id: `${identifier}-rel-${index}`,
+            label: toAllocationHost({ ip: entry.ip, alias: entry.alias, port: entry.port }),
+            ip: entry.ip ?? "",
+            alias: entry.alias ?? "",
+            port: coerceNumber(entry.port),
+            notes: "",
+            isDefault: Boolean(entry.is_default)
+          }))
+      : (applicationServer?.allocations ?? []).map((entry, index) => ({
+          id: `${applicationServer?.id ?? identifier}-${index}`,
+          label: toAllocationHost(entry),
+          ip: entry.ip ?? "",
+          alias: entry.alias ?? "",
+          port: coerceNumber(entry.port),
+          notes: "",
+          isDefault: index === 0
+        }));
   const limits = clientServer.limits ?? applicationServer?.limits;
 
   return {
@@ -1012,6 +1027,70 @@ export async function getGameServerConsoleWebsocket(identifier: string): Promise
   };
 }
 
+export async function streamGameServerConsole(
+  identifier: string,
+  response: ServerResponse,
+  onClose?: () => void
+) {
+  const websocket = await getClientWebsocket(identifier);
+  if (!websocket.socket || !websocket.token) {
+    throw new Error("Pterodactyl did not return websocket credentials.");
+  }
+
+  const NodeWebSocket = (globalThis as { WebSocket?: new (url: string) => {
+    send(data: string): void;
+    close(): void;
+    addEventListener(type: string, listener: (event: { data?: unknown }) => void): void;
+  } }).WebSocket;
+
+  if (!NodeWebSocket) {
+    throw new Error("This Node runtime does not expose a global WebSocket implementation.");
+  }
+
+  const socket = new NodeWebSocket(websocket.socket);
+  const write = (event: string, payload: unknown) => {
+    response.write(`event: ${event}\n`);
+    response.write(`data: ${JSON.stringify(payload)}\n\n`);
+  };
+
+  socket.addEventListener("open", () => {
+    socket.send(JSON.stringify({ event: "auth", args: [websocket.token] }));
+    socket.send(JSON.stringify({ event: "send logs", args: [] }));
+    write("ready", { ok: true });
+  });
+
+  socket.addEventListener("message", (event) => {
+    try {
+      const payload = JSON.parse(String(event.data ?? "")) as { event?: string; args?: string[] };
+      if (payload.event === "console output" || payload.event === "daemon message" || payload.event === "install output") {
+        write("line", { lines: payload.args ?? [] });
+      } else if (payload.event === "token expiring") {
+        write("status", { message: "Console token expiring" });
+      } else if (payload.event === "token expired") {
+        write("status", { message: "Console token expired" });
+      } else if (payload.event === "jwt error") {
+        write("error", { message: (payload.args ?? []).join(" ") || "Console authorization failed" });
+      } else if (payload.event === "status") {
+        write("status", { message: (payload.args ?? []).join(" ") });
+      }
+    } catch {
+      write("line", { lines: [String(event.data ?? "")] });
+    }
+  });
+
+  const cleanup = () => {
+    try {
+      socket.close();
+    } catch {
+      // ignore cleanup errors
+    }
+    onClose?.();
+  };
+
+  response.on("close", cleanup);
+  response.on("finish", cleanup);
+}
+
 export async function performGamePowerAction(identifier: string, signal: "start" | "stop" | "restart" | "kill") {
   await pterodactylRequest("client", `/api/client/servers/${identifier}/power`, {
     method: "POST",
@@ -1095,10 +1174,10 @@ export async function getGameServerFileUploadUrl(identifier: string, directory: 
   return payload.attributes?.url ?? "";
 }
 
-export async function uploadGameServerFile(
+export async function uploadGameServerFiles(
   identifier: string,
   directory: string,
-  file: { name: string; buffer: Buffer; mimeType?: string }
+  files: Array<{ name: string; buffer: Buffer; mimeType?: string }>
 ) {
   const uploadUrl = await getGameServerFileUploadUrl(identifier, directory);
   if (!uploadUrl) {
@@ -1106,7 +1185,9 @@ export async function uploadGameServerFile(
   }
 
   const form = new FormData();
-  form.append("files", new Blob([file.buffer], { type: file.mimeType || "application/octet-stream" }), file.name);
+  for (const file of files) {
+    form.append("files", new Blob([file.buffer], { type: file.mimeType || "application/octet-stream" }), file.name);
+  }
 
   const response = await fetch(uploadUrl, {
     method: "POST",

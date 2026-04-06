@@ -53,7 +53,6 @@ type Files = {
   entries: Array<{ name: string; path: string; type: "file" | "directory"; size: number; mode: string; mimeType: string; createdAt: string; updatedAt: string }>;
 };
 
-type ConsoleAuth = { socket: string; token: string };
 type Catalog = {
   users: Array<{ id: string; username: string; email: string; name: string }>;
   nodes: Array<{ id: string; name: string; fqdn: string; allocations: Array<{ id: string; label: string; assigned: boolean }> }>;
@@ -139,7 +138,6 @@ export function GameControlPlane({ games, refresh }: { games: Dashboard | null; 
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [socketAuth, setSocketAuth] = useState<ConsoleAuth | null>(null);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [egg, setEgg] = useState<Egg | null>(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -152,7 +150,7 @@ export function GameControlPlane({ games, refresh }: { games: Dashboard | null; 
   const [renameTarget, setRenameTarget] = useState("");
   const [pullUrl, setPullUrl] = useState("");
   const [pullFileName, setPullFileName] = useState("");
-  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadFiles, setUploadFiles] = useState<File[]>([]);
   const [databaseForm, setDatabaseForm] = useState({ database: "", remote: "%" });
   const [subuserForm, setSubuserForm] = useState({ email: "", permissions: permissionStarter });
   const [userPermissions, setUserPermissions] = useState<Record<string, string>>({});
@@ -161,7 +159,7 @@ export function GameControlPlane({ games, refresh }: { games: Dashboard | null; 
   const [assignAllocationId, setAssignAllocationId] = useState("");
   const [create, setCreate] = useState(defaultCreate);
   const [envValues, setEnvValues] = useState<Record<string, string>>({});
-  const socketRef = useRef<WebSocket | null>(null);
+  const streamRef = useRef<EventSource | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
 
   const servers = games?.servers ?? [];
@@ -219,7 +217,7 @@ export function GameControlPlane({ games, refresh }: { games: Dashboard | null; 
   }
 
   function leaveWorkspace() {
-    socketRef.current?.close();
+    streamRef.current?.close();
     setSelected("");
     setDetail(null);
     setFiles(null);
@@ -268,34 +266,24 @@ export function GameControlPlane({ games, refresh }: { games: Dashboard | null; 
   useEffect(() => {
     if (!selected || tab !== "console") return;
     setConsoleLines([]);
-    void api<ConsoleAuth>(`/games/servers/${selected}/console/websocket`)
-      .then(setSocketAuth)
-      .catch((loadError) => setError(loadError instanceof Error ? loadError.message : "Unable to open console"));
-  }, [selected, tab]);
-
-  useEffect(() => {
-    if (!socketAuth || tab !== "console") return;
-    const socket = new WebSocket(socketAuth.socket);
-    socketRef.current = socket;
-    socket.addEventListener("open", () => {
-      socket.send(JSON.stringify({ event: "auth", args: [socketAuth.token] }));
-      socket.send(JSON.stringify({ event: "send logs", args: [] }));
+    const stream = new EventSource(`/api/games/servers/${selected}/console/stream`, { withCredentials: true });
+    streamRef.current = stream;
+    stream.addEventListener("line", (event) => {
+      const payload = JSON.parse((event as MessageEvent).data) as { lines?: string[] };
+      setConsoleLines((currentValue) => [...currentValue, ...(payload.lines ?? []).flatMap((line) => line.split("\n")).filter(Boolean)].slice(-600));
     });
-    socket.addEventListener("message", (event) => {
-      try {
-        const payload = JSON.parse(String(event.data)) as { event?: string; args?: string[] };
-        if (payload.event === "console output" || payload.event === "daemon message" || payload.event === "install output") {
-          setConsoleLines((currentValue) => [...currentValue, ...(payload.args ?? []).join("\n").split("\n").filter(Boolean)].slice(-600));
-        }
-      } catch {
-        setConsoleLines((currentValue) => [...currentValue, String(event.data)].slice(-600));
+    stream.addEventListener("status", (event) => {
+      const payload = JSON.parse((event as MessageEvent).data) as { message?: string };
+      if (payload.message) {
+        setConsoleLines((currentValue) => [...currentValue, `[status] ${payload.message}`].slice(-600));
       }
     });
-    socket.addEventListener("close", () => {
-      socketRef.current = null;
+    stream.addEventListener("error", (event) => {
+      const payload = JSON.parse((event as MessageEvent).data || "{\"message\":\"Console stream closed\"}") as { message?: string };
+      if (payload.message) setError(payload.message);
     });
-    return () => socket.close();
-  }, [socketAuth, tab]);
+    return () => stream.close();
+  }, [selected, tab]);
 
   useEffect(() => {
     if (!selected || tab !== "files") return;
@@ -379,18 +367,20 @@ export function GameControlPlane({ games, refresh }: { games: Dashboard | null; 
 
   async function uploadSelectedFile(event: FormEvent) {
     event.preventDefault();
-    if (!selected || !uploadFile) return;
+    if (!selected || !uploadFiles.length) return;
     setLoading(true);
     setError("");
     setMessage("");
     try {
       const body = new FormData();
       body.append("directory", directory);
-      body.append("file", uploadFile);
+      for (const file of uploadFiles) {
+        body.append("files", file);
+      }
       const response = await fetch(`/api/games/servers/${selected}/files/upload`, { method: "POST", credentials: "include", body });
       if (!response.ok) throw new Error(await response.text());
-      setUploadFile(null);
-      setMessage(`Uploaded ${uploadFile.name}`);
+      setUploadFiles([]);
+      setMessage(`Uploaded ${uploadFiles.length} file(s)`);
       await refreshSelection({ keepTab: true, refreshFiles: true });
     } catch (uploadError) {
       setError(uploadError instanceof Error ? uploadError.message : "Unable to upload file");
@@ -766,7 +756,7 @@ export function GameControlPlane({ games, refresh }: { games: Dashboard | null; 
                               <form className="game-inline-form" onSubmit={(event) => void createFolder(event)}><input value={folderName} onChange={(event) => setFolderName(event.target.value)} placeholder="New folder" /><button type="submit" disabled={loading}>Create Folder</button></form>
                               <form className="game-inline-form" onSubmit={(event) => void createFile(event)}><input value={newFileName} onChange={(event) => setNewFileName(event.target.value)} placeholder="New file" /><button type="submit" disabled={loading}>Create File</button></form>
                               <form className="game-inline-form" onSubmit={(event) => void pullRemoteFile(event)}><input value={pullUrl} onChange={(event) => setPullUrl(event.target.value)} placeholder="https://example.com/file.jar" /><input value={pullFileName} onChange={(event) => setPullFileName(event.target.value)} placeholder="filename.jar" /><button type="submit" disabled={loading}>Pull Remote</button></form>
-                              <form className="game-inline-form" onSubmit={(event) => void uploadSelectedFile(event)}><input type="file" onChange={(event) => setUploadFile(event.target.files?.[0] ?? null)} /><button type="submit" disabled={loading || !uploadFile}>Upload File</button></form>
+                              <form className="game-inline-form" onSubmit={(event) => void uploadSelectedFile(event)}><input type="file" multiple onChange={(event) => setUploadFiles(Array.from(event.target.files ?? []))} /><button type="submit" disabled={loading || !uploadFiles.length}>Upload Files</button></form>
                             </div>
                             <div className="game-file-list">{(files?.entries ?? []).map((entry) => <div key={entry.path} className={`game-file-row ${entry.path === selectedFilePath ? "game-file-row-active" : ""}`}><button type="button" className="game-file-open" onClick={() => { setSelectedFileName(entry.name); setRenameTarget(entry.name); setSelectedFileMode(entry.mode || "644"); if (entry.type === "directory") setDirectory(entry.path); else void openFile(entry.path, entry.name, entry.mode); }}><strong>{entry.name}</strong><span>{entry.type === "directory" ? "Directory" : `${entry.size} bytes`}</span></button><div className="game-row-actions">{entry.type === "file" ? <button type="button" className="small-button" onClick={() => window.open(`/api/games/servers/${selected}/files/download?path=${encodeURIComponent(entry.path)}`, "_blank", "noopener")}>Download</button> : null}<button type="button" className="small-button" onClick={() => void deleteFile(entry.name)}>Delete</button></div></div>)}</div>
                           </div>

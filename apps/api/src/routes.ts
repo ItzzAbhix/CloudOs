@@ -49,7 +49,8 @@ import {
   rotateGameServerDatabasePassword,
   assignGameServerAllocation,
   chmodGameServerFiles,
-  uploadGameServerFile
+  uploadGameServerFiles,
+  streamGameServerConsole
 } from "./games.js";
 import { appendAudit, createFolder, deletePath, enqueueDownload, getOverview, getServiceLogs, getServices, listFiles, movePath, runServiceAction, scanMediaLibrary } from "./system.js";
 import { stateStore } from "./store.js";
@@ -936,6 +937,19 @@ router.get("/games/servers/:identifier/console/websocket", async (req, res) => {
   }
 });
 
+router.get("/games/servers/:identifier/console/stream", async (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders?.();
+  try {
+    await streamGameServerConsole(req.params.identifier, res);
+  } catch (error) {
+    res.write(`event: error\ndata: ${JSON.stringify({ message: error instanceof Error ? error.message : "Unable to open console stream" })}\n\n`);
+    res.end();
+  }
+});
+
 router.put("/games/servers/:identifier/startup/variable", async (req, res) => {
   const parsed = gameStartupVariableSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -1247,20 +1261,25 @@ router.post("/games/servers/:identifier/files/pull", async (req, res) => {
   }
 });
 
-router.post("/games/servers/:identifier/files/upload", gameUpload.single("file"), async (req, res) => {
+router.post("/games/servers/:identifier/files/upload", gameUpload.array("files"), async (req, res) => {
   const identifier = String(req.params.identifier ?? "");
   const directory = typeof req.body.directory === "string" ? req.body.directory : "/";
-  if (!req.file) {
-    res.status(400).json({ error: "File is required" });
+  const files = Array.isArray(req.files) ? req.files : [];
+  if (!files.length) {
+    res.status(400).json({ error: "At least one file is required" });
     return;
   }
   try {
-    await uploadGameServerFile(identifier, directory, {
-      name: req.file.originalname,
-      buffer: req.file.buffer,
-      mimeType: req.file.mimetype
-    });
-    appendAudit("games.file.upload", `Uploaded ${req.file.originalname} to ${identifier}`, "admin");
+    await uploadGameServerFiles(
+      identifier,
+      directory,
+      files.map((file) => ({
+        name: file.originalname,
+        buffer: file.buffer,
+        mimeType: file.mimetype
+      }))
+    );
+    appendAudit("games.file.upload", `Uploaded ${files.length} file(s) to ${identifier}`, "admin");
     res.status(204).end();
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : "Unable to upload file" });
