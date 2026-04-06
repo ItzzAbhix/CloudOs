@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import path from "node:path";
 import { config } from "./config.js";
 import type { ServerResponse } from "node:http";
+import WebSocket from "ws";
 
 type PterodactylCollection<T> = {
   data?: Array<{ attributes?: T }>;
@@ -182,6 +183,8 @@ type ClientActivity = {
   is_api?: boolean;
   description?: string | null;
   created_at?: string;
+  timestamp?: string;
+  ip?: string | null;
 };
 
 type ClientWebsocket = {
@@ -419,6 +422,16 @@ function toRoundedMb(bytes: number) {
 
 function toHumanDate(value?: string | null) {
   return value ?? "Never";
+}
+
+function humanizeActivityEvent(event?: string) {
+  if (!event) return "Activity event";
+  return event
+    .split(".")
+    .map((part) => part.replace(/[:_-]+/g, " "))
+    .join(" / ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function toAllocationHost(allocation?: { ip?: string; alias?: string | null; port?: number | string | null }) {
@@ -1008,9 +1021,9 @@ export async function getGameServerDetail(identifier: string): Promise<GameServe
     activity: activity.map((entry) => ({
       id: entry.attributes?.id ?? crypto.randomUUID(),
       event: entry.attributes?.event ?? "unknown",
-      description: entry.attributes?.description ?? "",
-      source: entry.attributes?.is_api ? "API" : "Panel",
-      createdAt: toHumanDate(entry.attributes?.created_at)
+      description: entry.attributes?.description ?? humanizeActivityEvent(entry.attributes?.event),
+      source: entry.attributes?.is_api ? "API" : entry.attributes?.ip ? `Panel · ${entry.attributes.ip}` : "Panel",
+      createdAt: toHumanDate(entry.attributes?.timestamp ?? entry.attributes?.created_at)
     }))
   };
 }
@@ -1037,31 +1050,26 @@ export async function streamGameServerConsole(
     throw new Error("Pterodactyl did not return websocket credentials.");
   }
 
-  const NodeWebSocket = (globalThis as { WebSocket?: new (url: string) => {
-    send(data: string): void;
-    close(): void;
-    addEventListener(type: string, listener: (event: { data?: unknown }) => void): void;
-  } }).WebSocket;
-
-  if (!NodeWebSocket) {
-    throw new Error("This Node runtime does not expose a global WebSocket implementation.");
-  }
-
-  const socket = new NodeWebSocket(websocket.socket);
+  const socket = new WebSocket(websocket.socket, {
+    headers: {
+      Origin: trimTrailingSlash(config.pterodactylUrl)
+    }
+  });
   const write = (event: string, payload: unknown) => {
     response.write(`event: ${event}\n`);
     response.write(`data: ${JSON.stringify(payload)}\n\n`);
   };
 
-  socket.addEventListener("open", () => {
+  socket.on("open", () => {
     socket.send(JSON.stringify({ event: "auth", args: [websocket.token] }));
+    socket.send(JSON.stringify({ event: "set state", args: ["start"] }));
     socket.send(JSON.stringify({ event: "send logs", args: [] }));
     write("ready", { ok: true });
   });
 
-  socket.addEventListener("message", (event) => {
+  socket.on("message", (event: WebSocket.RawData) => {
     try {
-      const payload = JSON.parse(String(event.data ?? "")) as { event?: string; args?: string[] };
+      const payload = JSON.parse(String(event)) as { event?: string; args?: string[] };
       if (payload.event === "console output" || payload.event === "daemon message" || payload.event === "install output") {
         write("line", { lines: payload.args ?? [] });
       } else if (payload.event === "token expiring") {
@@ -1072,10 +1080,16 @@ export async function streamGameServerConsole(
         write("error", { message: (payload.args ?? []).join(" ") || "Console authorization failed" });
       } else if (payload.event === "status") {
         write("status", { message: (payload.args ?? []).join(" ") });
+      } else if (payload.event === "stats") {
+        write("stats", { values: payload.args ?? [] });
       }
     } catch {
-      write("line", { lines: [String(event.data ?? "")] });
+      write("line", { lines: [String(event)] });
     }
+  });
+
+  socket.on("error", (error: Error) => {
+    write("error", { message: error.message });
   });
 
   const cleanup = () => {
