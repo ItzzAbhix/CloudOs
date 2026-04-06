@@ -199,6 +199,16 @@ type ClientFileEntry = {
   modified_at?: string | null;
 };
 
+type ClientAllocation = {
+  id?: number;
+  ip?: string;
+  ip_alias?: string | null;
+  alias?: string | null;
+  port?: number | string;
+  notes?: string | null;
+  is_default?: boolean;
+};
+
 export type GameServerSummary = {
   id: string;
   identifier: string;
@@ -260,7 +270,15 @@ export type GameServerDetail = {
   description: string;
   node: string;
   allocation: string;
-  allocations: string[];
+  allocations: Array<{
+    id: string;
+    label: string;
+    ip: string;
+    alias: string;
+    port: number;
+    notes: string;
+    isDefault: boolean;
+  }>;
   suspended: boolean;
   installing: boolean;
   powerState: string;
@@ -319,6 +337,8 @@ export type GameServerDetail = {
     checksum: string;
     completedAt: string;
     createdAt: string;
+    isLocked: boolean;
+    isSuccessful: boolean;
   }>;
   users: Array<{
     id: string;
@@ -353,6 +373,10 @@ export type GameServerFiles = {
     createdAt: string;
     updatedAt: string;
   }>;
+};
+
+export type GameServerDownload = {
+  url: string;
 };
 
 export type GameCreateCatalog = {
@@ -476,6 +500,36 @@ async function pterodactylRequest<T>(scope: "application" | "client", pathname: 
   }
 
   return (await response.json()) as T;
+}
+
+async function pterodactylResponse(scope: "application" | "client", pathname: string, init?: RequestInit) {
+  const token = scope === "application" ? config.pterodactylApplicationApiKey : config.pterodactylClientApiKey;
+  if (!config.pterodactylUrl) {
+    throw new Error("CLOUDOS_PTERODACTYL_URL is not configured.");
+  }
+  if (!token) {
+    throw new Error(
+      scope === "application"
+        ? "CLOUDOS_PTERODACTYL_APPLICATION_API_KEY is not configured."
+        : "CLOUDOS_PTERODACTYL_CLIENT_API_KEY is not configured."
+    );
+  }
+
+  const response = await fetch(`${trimTrailingSlash(config.pterodactylUrl)}${pathname}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "Application/vnd.pterodactyl.v1+json",
+      ...(init?.headers ?? {})
+    }
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(parsePterodactylError(text, response.status));
+  }
+
+  return response;
 }
 
 async function pterodactylTextRequest(scope: "application" | "client", pathname: string, init?: RequestInit) {
@@ -625,6 +679,14 @@ async function getClientUsers(identifier: string) {
   const payload = await pterodactylRequest<PterodactylCollection<ClientSubuser>>(
     "client",
     `/api/client/servers/${identifier}/users`
+  );
+  return payload.data ?? [];
+}
+
+async function getClientNetworkAllocations(identifier: string) {
+  const payload = await pterodactylRequest<PterodactylCollection<ClientAllocation>>(
+    "client",
+    `/api/client/servers/${identifier}/network/allocations`
   );
   return payload.data ?? [];
 }
@@ -806,7 +868,7 @@ export async function getGamesDashboard(): Promise<GamesDashboard> {
 }
 
 export async function getGameServerDetail(identifier: string): Promise<GameServerDetail> {
-  const [clientServer, resource, startup, databases, schedules, backups, users, activity, applicationServers, nodes] =
+  const [clientServer, resource, startup, databases, schedules, backups, users, activity, applicationServers, nodes, networkAllocations] =
     await Promise.all([
       getClientServer(identifier),
       getClientResources(identifier),
@@ -817,14 +879,33 @@ export async function getGameServerDetail(identifier: string): Promise<GameServe
       getClientUsers(identifier),
       getClientActivity(identifier),
       listApplicationServers(),
-      listApplicationNodes()
+      listApplicationNodes(),
+      getClientNetworkAllocations(identifier)
     ]);
 
   const { applicationServer, node } = resolveApplicationContext(identifier, applicationServers, nodes);
-  const clientAllocations = clientServer.relationships?.allocations?.data ?? [];
-  const allocations = clientAllocations.length
-    ? clientAllocations.map((entry) => toAllocationHost(entry.attributes))
-    : applicationServer?.allocations?.map((entry) => toAllocationHost(entry)) ?? [];
+  const allocations = networkAllocations.length
+    ? networkAllocations
+        .map((entry) => entry.attributes)
+        .filter((entry): entry is ClientAllocation => Boolean(entry?.id))
+        .map((entry) => ({
+          id: String(entry.id),
+          label: `${entry.alias || entry.ip_alias || entry.ip}:${entry.port ?? ""}`.replace(/:$/, ""),
+          ip: entry.ip ?? "",
+          alias: entry.alias || entry.ip_alias || "",
+          port: coerceNumber(entry.port),
+          notes: entry.notes ?? "",
+          isDefault: Boolean(entry.is_default)
+        }))
+    : (applicationServer?.allocations ?? []).map((entry, index) => ({
+        id: `${applicationServer?.id ?? identifier}-${index}`,
+        label: toAllocationHost(entry),
+        ip: entry.ip ?? "",
+        alias: entry.alias ?? "",
+        port: coerceNumber(entry.port),
+        notes: "",
+        isDefault: index === 0
+      }));
   const limits = clientServer.limits ?? applicationServer?.limits;
 
   return {
@@ -835,7 +916,7 @@ export async function getGameServerDetail(identifier: string): Promise<GameServe
     name: clientServer.name ?? applicationServer?.name ?? identifier,
     description: clientServer.description ?? applicationServer?.description ?? "",
     node: clientServer.node ?? node?.name ?? "Unknown node",
-    allocation: toAllocationString(applicationServer),
+    allocation: allocations.find((entry) => entry.isDefault)?.label ?? toAllocationString(applicationServer),
     allocations,
     suspended: Boolean(resource?.is_suspended ?? clientServer.is_suspended ?? applicationServer?.suspended),
     installing: Boolean(clientServer.is_installing),
@@ -898,7 +979,9 @@ export async function getGameServerDetail(identifier: string): Promise<GameServe
       sizeMb: toRoundedMb(coerceNumber(entry.attributes?.bytes)),
       checksum: entry.attributes?.checksum ?? "pending",
       completedAt: toHumanDate(entry.attributes?.completed_at),
-      createdAt: toHumanDate(entry.attributes?.created_at)
+      createdAt: toHumanDate(entry.attributes?.created_at),
+      isLocked: Boolean((entry.attributes as ClientBackup & { is_locked?: boolean })?.is_locked),
+      isSuccessful: Boolean((entry.attributes as ClientBackup & { is_successful?: boolean })?.is_successful)
     })),
     users: users.map((entry) => ({
       id: entry.attributes?.uuid ?? crypto.randomUUID(),
@@ -950,6 +1033,34 @@ export async function createGameServerBackup(identifier: string, name?: string) 
   });
 }
 
+export async function getGameServerBackupDownload(identifier: string, backupId: string): Promise<GameServerDownload> {
+  const payload = await pterodactylRequest<{ attributes?: { url?: string } }>(
+    "client",
+    `/api/client/servers/${identifier}/backups/${backupId}/download`
+  );
+  return { url: payload.attributes?.url ?? "" };
+}
+
+export async function restoreGameServerBackup(identifier: string, backupId: string, truncate = true) {
+  await pterodactylRequest("client", `/api/client/servers/${identifier}/backups/${backupId}/restore`, {
+    method: "POST",
+    body: JSON.stringify({ truncate })
+  });
+}
+
+export async function toggleGameServerBackupLock(identifier: string, backupId: string) {
+  await pterodactylRequest("client", `/api/client/servers/${identifier}/backups/${backupId}/lock`, {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+}
+
+export async function deleteGameServerBackup(identifier: string, backupId: string) {
+  await pterodactylRequest("client", `/api/client/servers/${identifier}/backups/${backupId}`, {
+    method: "DELETE"
+  });
+}
+
 export async function getGameServerFiles(identifier: string, directory = "/"): Promise<GameServerFiles> {
   const encodedDirectory = encodeURIComponent(directory);
   const payload = await pterodactylRequest<PterodactylCollection<ClientFileEntry>>(
@@ -974,6 +1085,49 @@ export async function getGameServerFiles(identifier: string, directory = "/"): P
 
 export async function getGameServerFileContents(identifier: string, filePath: string) {
   return pterodactylTextRequest("client", `/api/client/servers/${identifier}/files/contents?file=${encodeURIComponent(filePath)}`);
+}
+
+export async function getGameServerFileUploadUrl(identifier: string, directory: string) {
+  const payload = await pterodactylRequest<{ attributes?: { url?: string } }>(
+    "client",
+    `/api/client/servers/${identifier}/files/upload?directory=${encodeURIComponent(directory)}`
+  );
+  return payload.attributes?.url ?? "";
+}
+
+export async function uploadGameServerFile(
+  identifier: string,
+  directory: string,
+  file: { name: string; buffer: Buffer; mimeType?: string }
+) {
+  const uploadUrl = await getGameServerFileUploadUrl(identifier, directory);
+  if (!uploadUrl) {
+    throw new Error("Pterodactyl did not return an upload URL.");
+  }
+
+  const form = new FormData();
+  form.append("files", new Blob([file.buffer], { type: file.mimeType || "application/octet-stream" }), file.name);
+
+  const response = await fetch(uploadUrl, {
+    method: "POST",
+    body: form
+  });
+
+  if (!response.ok) {
+    throw new Error(`Pterodactyl upload failed (${response.status})`);
+  }
+}
+
+export async function getGameServerFileDownload(identifier: string, filePath: string) {
+  const response = await pterodactylResponse(
+    "client",
+    `/api/client/servers/${identifier}/files/download?file=${encodeURIComponent(filePath)}`
+  );
+  return {
+    buffer: Buffer.from(await response.arrayBuffer()),
+    contentType: response.headers.get("content-type") ?? "application/octet-stream",
+    disposition: response.headers.get("content-disposition") ?? `attachment; filename="${path.posix.basename(filePath)}"`
+  };
 }
 
 export async function saveGameServerFileContents(identifier: string, filePath: string, content: string) {
@@ -1011,6 +1165,41 @@ export async function deleteGameServerFiles(identifier: string, directory: strin
   await pterodactylRequest("client", `/api/client/servers/${identifier}/files/delete`, {
     method: "POST",
     body: JSON.stringify({ root: directory, files })
+  });
+}
+
+export async function renameGameServerFiles(identifier: string, directory: string, from: string, to: string) {
+  await pterodactylRequest("client", `/api/client/servers/${identifier}/files/rename`, {
+    method: "PUT",
+    body: JSON.stringify({ root: directory, files: [{ from, to }] })
+  });
+}
+
+export async function compressGameServerFiles(identifier: string, directory: string, files: string[]) {
+  await pterodactylRequest("client", `/api/client/servers/${identifier}/files/compress`, {
+    method: "POST",
+    body: JSON.stringify({ root: directory, files })
+  });
+}
+
+export async function decompressGameServerFile(identifier: string, directory: string, file: string) {
+  await pterodactylRequest("client", `/api/client/servers/${identifier}/files/decompress`, {
+    method: "POST",
+    body: JSON.stringify({ root: directory, file })
+  });
+}
+
+export async function chmodGameServerFiles(identifier: string, directory: string, file: string, mode: string) {
+  await pterodactylRequest("client", `/api/client/servers/${identifier}/files/chmod`, {
+    method: "POST",
+    body: JSON.stringify({ root: directory, files: [{ file, mode }] })
+  });
+}
+
+export async function pullGameServerFile(identifier: string, directory: string, url: string, filename: string) {
+  await pterodactylRequest("client", `/api/client/servers/${identifier}/files/pull`, {
+    method: "POST",
+    body: JSON.stringify({ directory, url, filename })
   });
 }
 
@@ -1134,6 +1323,136 @@ export async function createGameServer(input: {
         additional: input.allocation.additional ?? []
       }
     })
+  });
+}
+
+export async function createGameServerDatabase(identifier: string, database: string, remote: string) {
+  return pterodactylRequest("client", `/api/client/servers/${identifier}/databases`, {
+    method: "POST",
+    body: JSON.stringify({ database, remote })
+  });
+}
+
+export async function rotateGameServerDatabasePassword(identifier: string, databaseId: string) {
+  return pterodactylRequest("client", `/api/client/servers/${identifier}/databases/${databaseId}/rotate-password`, {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+}
+
+export async function deleteGameServerDatabase(identifier: string, databaseId: string) {
+  await pterodactylRequest("client", `/api/client/servers/${identifier}/databases/${databaseId}`, {
+    method: "DELETE"
+  });
+}
+
+export async function createGameServerSubuser(identifier: string, email: string, permissions: string[]) {
+  await pterodactylRequest("client", `/api/client/servers/${identifier}/users`, {
+    method: "POST",
+    body: JSON.stringify({ email, permissions })
+  });
+}
+
+export async function updateGameServerSubuser(identifier: string, userId: string, permissions: string[]) {
+  await pterodactylRequest("client", `/api/client/servers/${identifier}/users/${userId}`, {
+    method: "POST",
+    body: JSON.stringify({ permissions })
+  });
+}
+
+export async function deleteGameServerSubuser(identifier: string, userId: string) {
+  await pterodactylRequest("client", `/api/client/servers/${identifier}/users/${userId}`, {
+    method: "DELETE"
+  });
+}
+
+export async function createGameServerSchedule(
+  identifier: string,
+  input: {
+    name: string;
+    minute: string;
+    hour: string;
+    dayOfMonth: string;
+    month: string;
+    dayOfWeek: string;
+    onlyWhenOnline?: boolean;
+    isActive?: boolean;
+  }
+) {
+  await pterodactylRequest("client", `/api/client/servers/${identifier}/schedules`, {
+    method: "POST",
+    body: JSON.stringify({
+      name: input.name,
+      minute: input.minute,
+      hour: input.hour,
+      day_of_month: input.dayOfMonth,
+      month: input.month,
+      day_of_week: input.dayOfWeek,
+      only_when_online: input.onlyWhenOnline ?? false,
+      is_active: input.isActive ?? true
+    })
+  });
+}
+
+export async function executeGameServerSchedule(identifier: string, scheduleId: string) {
+  await pterodactylRequest("client", `/api/client/servers/${identifier}/schedules/${scheduleId}/execute`, {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+}
+
+export async function deleteGameServerSchedule(identifier: string, scheduleId: string) {
+  await pterodactylRequest("client", `/api/client/servers/${identifier}/schedules/${scheduleId}`, {
+    method: "DELETE"
+  });
+}
+
+export async function createGameServerScheduleTask(
+  identifier: string,
+  scheduleId: string,
+  task: { action: string; payload: string; timeOffset: number; continueOnFailure?: boolean }
+) {
+  await pterodactylRequest("client", `/api/client/servers/${identifier}/schedules/${scheduleId}/tasks`, {
+    method: "POST",
+    body: JSON.stringify({
+      action: task.action,
+      payload: task.payload,
+      time_offset: task.timeOffset,
+      continue_on_failure: task.continueOnFailure ?? false
+    })
+  });
+}
+
+export async function deleteGameServerScheduleTask(identifier: string, scheduleId: string, taskId: string) {
+  await pterodactylRequest("client", `/api/client/servers/${identifier}/schedules/${scheduleId}/tasks/${taskId}`, {
+    method: "DELETE"
+  });
+}
+
+export async function assignGameServerAllocation(identifier: string, ip?: string, port?: number) {
+  await pterodactylRequest("client", `/api/client/servers/${identifier}/network/allocations`, {
+    method: "POST",
+    body: JSON.stringify({ ...(ip ? { ip } : {}), ...(port ? { port } : {}) })
+  });
+}
+
+export async function setGameServerPrimaryAllocation(identifier: string, allocationId: string) {
+  await pterodactylRequest("client", `/api/client/servers/${identifier}/network/allocations/${allocationId}/primary`, {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+}
+
+export async function updateGameServerAllocationNotes(identifier: string, allocationId: string, notes: string) {
+  await pterodactylRequest("client", `/api/client/servers/${identifier}/network/allocations/${allocationId}`, {
+    method: "POST",
+    body: JSON.stringify({ notes })
+  });
+}
+
+export async function removeGameServerAllocation(identifier: string, allocationId: string) {
+  await pterodactylRequest("client", `/api/client/servers/${identifier}/network/allocations/${allocationId}`, {
+    method: "DELETE"
   });
 }
 

@@ -9,7 +9,20 @@ import {
   createGameServerBackup,
   createGameServer,
   createGameServerFolder,
+  createGameServerDatabase,
+  createGameServerSchedule,
+  createGameServerScheduleTask,
+  createGameServerSubuser,
   deleteGameServerFiles,
+  deleteGameServerBackup,
+  deleteGameServerDatabase,
+  deleteGameServerSchedule,
+  deleteGameServerScheduleTask,
+  deleteGameServerSubuser,
+  decompressGameServerFile,
+  executeGameServerSchedule,
+  getGameServerBackupDownload,
+  getGameServerFileDownload,
   getGamesDashboard,
   getGameCreateCatalog,
   getGameEggTemplate,
@@ -18,12 +31,25 @@ import {
   getGameServerFileContents,
   getGameServerFiles,
   performGamePowerAction,
+  pullGameServerFile,
+  compressGameServerFiles,
+  removeGameServerAllocation,
+  renameGameServerFiles,
   reinstallGameServer,
   renameGameServer,
+  restoreGameServerBackup,
   saveGameServerFileContents,
   sendGameServerCommand,
+  setGameServerPrimaryAllocation,
+  toggleGameServerBackupLock,
+  updateGameServerAllocationNotes,
   updateGameServerDockerImage,
-  updateGameServerStartupVariable
+  updateGameServerStartupVariable,
+  updateGameServerSubuser,
+  rotateGameServerDatabasePassword,
+  assignGameServerAllocation,
+  chmodGameServerFiles,
+  uploadGameServerFile
 } from "./games.js";
 import { appendAudit, createFolder, deletePath, enqueueDownload, getOverview, getServiceLogs, getServices, listFiles, movePath, runServiceAction, scanMediaLibrary } from "./system.js";
 import { stateStore } from "./store.js";
@@ -143,6 +169,33 @@ const gameBackupSchema = z.object({ name: z.string().optional() });
 const gameStartupVariableSchema = z.object({ key: z.string().min(1), value: z.string() });
 const gameRenameSchema = z.object({ name: z.string().min(1), description: z.string().optional().default("") });
 const gameDockerImageSchema = z.object({ dockerImage: z.string().min(1) });
+const gameDatabaseCreateSchema = z.object({ database: z.string().min(1), remote: z.string().default("%") });
+const gameSubuserSchema = z.object({ email: z.string().email(), permissions: z.array(z.string().min(1)).min(1) });
+const gameSubuserUpdateSchema = z.object({ permissions: z.array(z.string().min(1)).min(1) });
+const gameScheduleCreateSchema = z.object({
+  name: z.string().min(1),
+  minute: z.string().min(1).default("*"),
+  hour: z.string().min(1).default("*"),
+  dayOfMonth: z.string().min(1).default("*"),
+  month: z.string().min(1).default("*"),
+  dayOfWeek: z.string().min(1).default("*"),
+  onlyWhenOnline: z.boolean().optional(),
+  isActive: z.boolean().optional()
+});
+const gameScheduleTaskSchema = z.object({
+  action: z.string().min(1),
+  payload: z.string().default(""),
+  timeOffset: z.number().int().nonnegative(),
+  continueOnFailure: z.boolean().optional()
+});
+const gameBackupRestoreSchema = z.object({ truncate: z.boolean().optional().default(true) });
+const gameAllocationAssignSchema = z.object({ ip: z.string().optional(), port: z.number().int().positive().optional() });
+const gameAllocationNotesSchema = z.object({ notes: z.string() });
+const gameRenameFileSchema = z.object({ directory: z.string().min(1), from: z.string().min(1), to: z.string().min(1) });
+const gameCompressFilesSchema = z.object({ directory: z.string().min(1), files: z.array(z.string().min(1)).min(1) });
+const gameDecompressFileSchema = z.object({ directory: z.string().min(1), file: z.string().min(1) });
+const gameChmodFileSchema = z.object({ directory: z.string().min(1), file: z.string().min(1), mode: z.string().min(3) });
+const gamePullFileSchema = z.object({ directory: z.string().min(1), url: z.string().url(), filename: z.string().min(1) });
 const gameCreateServerSchema = z.object({
   name: z.string().min(1),
   description: z.string().optional(),
@@ -170,6 +223,7 @@ const gameCreateServerSchema = z.object({
 });
 
 const upload = multer({ dest: config.filesRoot });
+const gameUpload = multer({ storage: multer.memoryStorage() });
 
 export const router = Router();
 
@@ -1056,5 +1110,344 @@ router.post("/games/servers/:identifier/backups", async (req, res) => {
     res.status(204).end();
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : "Unable to create backup" });
+  }
+});
+
+router.get("/games/servers/:identifier/backups/:backupId/download", async (req, res) => {
+  try {
+    res.json(await getGameServerBackupDownload(req.params.identifier, req.params.backupId));
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to get backup download" });
+  }
+});
+
+router.post("/games/servers/:identifier/backups/:backupId/restore", async (req, res) => {
+  const parsed = gameBackupRestoreSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  try {
+    await restoreGameServerBackup(req.params.identifier, req.params.backupId, parsed.data.truncate);
+    appendAudit("games.backup.restore", `Restored backup ${req.params.backupId} on ${req.params.identifier}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to restore backup" });
+  }
+});
+
+router.post("/games/servers/:identifier/backups/:backupId/lock", async (req, res) => {
+  try {
+    await toggleGameServerBackupLock(req.params.identifier, req.params.backupId);
+    appendAudit("games.backup.lock", `Toggled backup lock ${req.params.backupId} on ${req.params.identifier}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to update backup lock" });
+  }
+});
+
+router.delete("/games/servers/:identifier/backups/:backupId", async (req, res) => {
+  try {
+    await deleteGameServerBackup(req.params.identifier, req.params.backupId);
+    appendAudit("games.backup.delete", `Deleted backup ${req.params.backupId} on ${req.params.identifier}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to delete backup" });
+  }
+});
+
+router.get("/games/servers/:identifier/files/download", async (req, res) => {
+  const filePath = typeof req.query.path === "string" ? req.query.path : "";
+  if (!filePath) {
+    res.status(400).json({ error: "File path is required" });
+    return;
+  }
+  try {
+    const result = await getGameServerFileDownload(req.params.identifier, filePath);
+    res.setHeader("content-type", result.contentType);
+    res.setHeader("content-disposition", result.disposition);
+    res.send(result.buffer);
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to download file" });
+  }
+});
+
+router.put("/games/servers/:identifier/files/rename", async (req, res) => {
+  const parsed = gameRenameFileSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  try {
+    await renameGameServerFiles(req.params.identifier, parsed.data.directory, parsed.data.from, parsed.data.to);
+    appendAudit("games.file.rename", `Renamed ${parsed.data.from} on ${req.params.identifier}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to rename file" });
+  }
+});
+
+router.post("/games/servers/:identifier/files/compress", async (req, res) => {
+  const parsed = gameCompressFilesSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  try {
+    await compressGameServerFiles(req.params.identifier, parsed.data.directory, parsed.data.files);
+    appendAudit("games.file.compress", `Compressed files on ${req.params.identifier}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to compress files" });
+  }
+});
+
+router.post("/games/servers/:identifier/files/decompress", async (req, res) => {
+  const parsed = gameDecompressFileSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  try {
+    await decompressGameServerFile(req.params.identifier, parsed.data.directory, parsed.data.file);
+    appendAudit("games.file.decompress", `Decompressed ${parsed.data.file} on ${req.params.identifier}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to decompress file" });
+  }
+});
+
+router.post("/games/servers/:identifier/files/chmod", async (req, res) => {
+  const parsed = gameChmodFileSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  try {
+    await chmodGameServerFiles(req.params.identifier, parsed.data.directory, parsed.data.file, parsed.data.mode);
+    appendAudit("games.file.chmod", `Changed mode for ${parsed.data.file} on ${req.params.identifier}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to change file mode" });
+  }
+});
+
+router.post("/games/servers/:identifier/files/pull", async (req, res) => {
+  const parsed = gamePullFileSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  try {
+    await pullGameServerFile(req.params.identifier, parsed.data.directory, parsed.data.url, parsed.data.filename);
+    appendAudit("games.file.pull", `Pulled remote file ${parsed.data.filename} on ${req.params.identifier}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to pull remote file" });
+  }
+});
+
+router.post("/games/servers/:identifier/files/upload", gameUpload.single("file"), async (req, res) => {
+  const identifier = String(req.params.identifier ?? "");
+  const directory = typeof req.body.directory === "string" ? req.body.directory : "/";
+  if (!req.file) {
+    res.status(400).json({ error: "File is required" });
+    return;
+  }
+  try {
+    await uploadGameServerFile(identifier, directory, {
+      name: req.file.originalname,
+      buffer: req.file.buffer,
+      mimeType: req.file.mimetype
+    });
+    appendAudit("games.file.upload", `Uploaded ${req.file.originalname} to ${identifier}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to upload file" });
+  }
+});
+
+router.post("/games/servers/:identifier/databases", async (req, res) => {
+  const parsed = gameDatabaseCreateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  try {
+    const result = await createGameServerDatabase(req.params.identifier, parsed.data.database, parsed.data.remote);
+    appendAudit("games.database.create", `Created database ${parsed.data.database} on ${req.params.identifier}`, "admin");
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to create database" });
+  }
+});
+
+router.post("/games/servers/:identifier/databases/:databaseId/rotate-password", async (req, res) => {
+  try {
+    const result = await rotateGameServerDatabasePassword(req.params.identifier, req.params.databaseId);
+    appendAudit("games.database.rotate", `Rotated password for ${req.params.databaseId} on ${req.params.identifier}`, "admin");
+    res.json(result);
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to rotate database password" });
+  }
+});
+
+router.delete("/games/servers/:identifier/databases/:databaseId", async (req, res) => {
+  try {
+    await deleteGameServerDatabase(req.params.identifier, req.params.databaseId);
+    appendAudit("games.database.delete", `Deleted database ${req.params.databaseId} on ${req.params.identifier}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to delete database" });
+  }
+});
+
+router.post("/games/servers/:identifier/users", async (req, res) => {
+  const parsed = gameSubuserSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  try {
+    await createGameServerSubuser(req.params.identifier, parsed.data.email, parsed.data.permissions);
+    appendAudit("games.subuser.create", `Created subuser ${parsed.data.email} on ${req.params.identifier}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to create subuser" });
+  }
+});
+
+router.put("/games/servers/:identifier/users/:userId", async (req, res) => {
+  const parsed = gameSubuserUpdateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  try {
+    await updateGameServerSubuser(req.params.identifier, req.params.userId, parsed.data.permissions);
+    appendAudit("games.subuser.update", `Updated subuser ${req.params.userId} on ${req.params.identifier}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to update subuser" });
+  }
+});
+
+router.delete("/games/servers/:identifier/users/:userId", async (req, res) => {
+  try {
+    await deleteGameServerSubuser(req.params.identifier, req.params.userId);
+    appendAudit("games.subuser.delete", `Deleted subuser ${req.params.userId} on ${req.params.identifier}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to delete subuser" });
+  }
+});
+
+router.post("/games/servers/:identifier/schedules", async (req, res) => {
+  const parsed = gameScheduleCreateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  try {
+    await createGameServerSchedule(req.params.identifier, parsed.data);
+    appendAudit("games.schedule.create", `Created schedule ${parsed.data.name} on ${req.params.identifier}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to create schedule" });
+  }
+});
+
+router.post("/games/servers/:identifier/schedules/:scheduleId/execute", async (req, res) => {
+  try {
+    await executeGameServerSchedule(req.params.identifier, req.params.scheduleId);
+    appendAudit("games.schedule.execute", `Executed schedule ${req.params.scheduleId} on ${req.params.identifier}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to execute schedule" });
+  }
+});
+
+router.delete("/games/servers/:identifier/schedules/:scheduleId", async (req, res) => {
+  try {
+    await deleteGameServerSchedule(req.params.identifier, req.params.scheduleId);
+    appendAudit("games.schedule.delete", `Deleted schedule ${req.params.scheduleId} on ${req.params.identifier}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to delete schedule" });
+  }
+});
+
+router.post("/games/servers/:identifier/schedules/:scheduleId/tasks", async (req, res) => {
+  const parsed = gameScheduleTaskSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  try {
+    await createGameServerScheduleTask(req.params.identifier, req.params.scheduleId, parsed.data);
+    appendAudit("games.schedule.task.create", `Added task to ${req.params.scheduleId} on ${req.params.identifier}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to create schedule task" });
+  }
+});
+
+router.delete("/games/servers/:identifier/schedules/:scheduleId/tasks/:taskId", async (req, res) => {
+  try {
+    await deleteGameServerScheduleTask(req.params.identifier, req.params.scheduleId, req.params.taskId);
+    appendAudit("games.schedule.task.delete", `Deleted task ${req.params.taskId} on ${req.params.identifier}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to delete schedule task" });
+  }
+});
+
+router.post("/games/servers/:identifier/network/allocations", async (req, res) => {
+  const parsed = gameAllocationAssignSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  try {
+    await assignGameServerAllocation(req.params.identifier, parsed.data.ip, parsed.data.port);
+    appendAudit("games.network.assign", `Assigned allocation on ${req.params.identifier}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to assign allocation" });
+  }
+});
+
+router.post("/games/servers/:identifier/network/allocations/:allocationId/primary", async (req, res) => {
+  try {
+    await setGameServerPrimaryAllocation(req.params.identifier, req.params.allocationId);
+    appendAudit("games.network.primary", `Set primary allocation ${req.params.allocationId} on ${req.params.identifier}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to set primary allocation" });
+  }
+});
+
+router.post("/games/servers/:identifier/network/allocations/:allocationId", async (req, res) => {
+  const parsed = gameAllocationNotesSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.flatten() });
+    return;
+  }
+  try {
+    await updateGameServerAllocationNotes(req.params.identifier, req.params.allocationId, parsed.data.notes);
+    appendAudit("games.network.notes", `Updated allocation notes ${req.params.allocationId} on ${req.params.identifier}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to update allocation notes" });
+  }
+});
+
+router.delete("/games/servers/:identifier/network/allocations/:allocationId", async (req, res) => {
+  try {
+    await removeGameServerAllocation(req.params.identifier, req.params.allocationId);
+    appendAudit("games.network.delete", `Removed allocation ${req.params.allocationId} on ${req.params.identifier}`, "admin");
+    res.status(204).end();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "Unable to remove allocation" });
   }
 });

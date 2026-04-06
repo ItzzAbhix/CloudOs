@@ -717,6 +717,68 @@ select {
   gap: 1rem;
   margin-top: 1rem;
 }
+.game-list-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+  margin: 1rem 0;
+}
+.game-list-toolbar h3,
+.game-manager-heading h3 {
+  margin: 0;
+}
+.game-server-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+}
+.game-server-card-button {
+  text-align: left;
+  color: var(--ink);
+  background: linear-gradient(180deg, #fff, #f8faff);
+  border: 1px solid var(--line);
+  box-shadow: none;
+  display: grid;
+  gap: 1rem;
+  transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease;
+}
+.game-server-card-button:hover {
+  transform: translateY(-2px);
+  border-color: rgba(123, 104, 255, 0.28);
+  box-shadow: 0 18px 34px rgba(96, 112, 144, 0.12);
+}
+.game-server-card-button p {
+  margin: 0.3rem 0 0;
+  color: var(--muted);
+}
+.game-server-card-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+.game-server-card-meta span {
+  display: block;
+  color: var(--muted);
+  margin-bottom: 0.2rem;
+}
+.game-manager-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+  margin-top: 1rem;
+}
+.game-manager-heading p {
+  margin: 0.3rem 0 0;
+  color: var(--muted);
+}
+.game-back-button {
+  background: #f4f6fd;
+  color: var(--ink);
+  box-shadow: none;
+  border: 1px solid var(--line);
+}
 .game-sidebar {
   display: grid;
   gap: 0.75rem;
@@ -734,11 +796,16 @@ select {
   box-shadow: none;
 }
 .game-server-list-item.active {
+  background: linear-gradient(135deg, #7b68ff, #2ecfc7);
   color: #fff;
   border-color: transparent;
 }
 .game-server-list-item p {
   margin: 0.3rem 0 0;
+}
+.game-server-list-item.active p,
+.game-server-list-item.active .badge {
+  color: #fff;
 }
 .game-manager-main {
   display: grid;
@@ -768,6 +835,9 @@ select {
   flex-wrap: wrap;
   gap: 0.6rem;
 }
+.game-detail-actions button {
+  min-width: 110px;
+}
 .game-tab-row {
   display: flex;
   flex-wrap: wrap;
@@ -788,6 +858,35 @@ select {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 1rem;
+}
+.game-section-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+.game-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+.game-stack-form {
+  display: grid;
+  gap: 0.9rem;
+}
+.game-toolbar-inline {
+  display: grid;
+  gap: 0.75rem;
+}
+.game-inline-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.7rem;
+  align-items: center;
+}
+.game-inline-form input,
+.game-inline-form select,
+.game-inline-form textarea {
+  min-width: 0;
 }
 .game-console-shell,
 .game-files-shell {
@@ -835,6 +934,12 @@ select {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 0.7rem;
   align-items: center;
+  border-radius: 18px;
+  padding: 0.25rem;
+  transition: background 140ms ease;
+}
+.game-file-row-active {
+  background: rgba(123, 104, 255, 0.08);
 }
 .game-file-open {
   text-align: left;
@@ -842,6 +947,12 @@ select {
   color: var(--ink);
   box-shadow: none;
   border: 1px solid var(--line);
+}
+.game-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  justify-content: flex-end;
 }
 .game-file-open span,
 .game-variable-values span,
@@ -1027,10 +1138,21 @@ button:disabled {
   .game-files-grid {
     grid-template-columns: 1fr;
   }
+  .game-list-toolbar,
+  .game-manager-header {
+    flex-direction: column;
+  }
   .game-detail-hero,
   .game-files-toolbar {
     flex-direction: column;
     align-items: flex-start;
+  }
+  .game-section-grid,
+  .game-form-grid {
+    grid-template-columns: 1fr;
+  }
+  .game-inline-form {
+    grid-template-columns: 1fr;
   }
   .game-command-row {
     grid-template-columns: 1fr;
