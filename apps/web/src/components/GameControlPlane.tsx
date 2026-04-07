@@ -60,6 +60,7 @@ type Catalog = {
 };
 type Egg = { dockerImage: string; startup: string; variables: Array<{ name: string; env: string; defaultValue: string; rules: string; description: string }> };
 type Tab = "overview" | "console" | "files" | "startup" | "network" | "backups" | "schedules" | "databases" | "users" | "activity";
+type ConsoleLine = { id: number; kind: "output" | "input" | "status"; text: string };
 
 const tabs: Array<{ id: Tab; label: string }> = [
   { id: "overview", label: "Overview" },
@@ -134,7 +135,7 @@ export function GameControlPlane({ games, refresh }: { games: Dashboard | null; 
   const [selectedFileMode, setSelectedFileMode] = useState("");
   const [fileContent, setFileContent] = useState("");
   const [command, setCommand] = useState("");
-  const [consoleLines, setConsoleLines] = useState<string[]>([]);
+  const [consoleLines, setConsoleLines] = useState<ConsoleLine[]>([]);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -161,11 +162,24 @@ export function GameControlPlane({ games, refresh }: { games: Dashboard | null; 
   const [envValues, setEnvValues] = useState<Record<string, string>>({});
   const streamRef = useRef<EventSource | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
+  const consoleLineIdRef = useRef(0);
 
   const servers = games?.servers ?? [];
   const currentServer = servers.find((server) => server.identifier === selected) ?? null;
   const currentCatalogNode = catalog?.nodes.find((node) => node.name === detail?.node) ?? null;
   const currentNest = catalog?.nests.find((nest) => nest.id === create.nestId) ?? null;
+
+  function appendConsoleLines(kind: ConsoleLine["kind"], lines: string[]) {
+    const nextLines = lines
+      .flatMap((line) => line.split("\n"))
+      .map((line) => line.replace(/\r/g, ""))
+      .filter((line) => line.trim().length > 0);
+    if (!nextLines.length) return;
+    setConsoleLines((currentValue) => [
+      ...currentValue,
+      ...nextLines.map((text) => ({ id: ++consoleLineIdRef.current, kind, text }))
+    ].slice(-600));
+  }
 
   async function loadCatalog() {
     const result = await api<Catalog>("/games/catalog");
@@ -270,13 +284,11 @@ export function GameControlPlane({ games, refresh }: { games: Dashboard | null; 
     streamRef.current = stream;
     stream.addEventListener("line", (event) => {
       const payload = JSON.parse((event as MessageEvent).data) as { lines?: string[] };
-      setConsoleLines((currentValue) => [...currentValue, ...(payload.lines ?? []).flatMap((line) => line.split("\n")).filter(Boolean)].slice(-600));
+      appendConsoleLines("output", payload.lines ?? []);
     });
     stream.addEventListener("status", (event) => {
       const payload = JSON.parse((event as MessageEvent).data) as { message?: string };
-      if (payload.message) {
-        setConsoleLines((currentValue) => [...currentValue, `[status] ${payload.message}`].slice(-600));
-      }
+      if (payload.message) appendConsoleLines("status", [payload.message]);
     });
     stream.addEventListener("error", (event) => {
       const payload = JSON.parse((event as MessageEvent).data || "{\"message\":\"Console stream closed\"}") as { message?: string };
@@ -313,7 +325,7 @@ export function GameControlPlane({ games, refresh }: { games: Dashboard | null; 
     if (!selected || !command.trim()) return;
     await runAction(async () => {
       await api(`/games/servers/${selected}/command`, { method: "POST", body: JSON.stringify({ command: command.trim() }) });
-      setConsoleLines((currentValue) => [...currentValue, `> ${command.trim()}`].slice(-600));
+      appendConsoleLines("input", [`> ${command.trim()}`]);
       setCommand("");
     }, "Command sent", { keepTab: true });
   }
@@ -739,7 +751,10 @@ export function GameControlPlane({ games, refresh }: { games: Dashboard | null; 
 
                     {tab === "console" ? (
                       <div className="game-console-shell">
-                        <div className="log-screen game-console-screen">{consoleLines.length ? consoleLines.join("\n") : "Waiting for console output..."}<div ref={endRef} /></div>
+                        <div className="log-screen game-console-screen">
+                          {consoleLines.length ? consoleLines.map((line) => <div key={line.id} className={`game-console-line game-console-line-${line.kind}`}>{line.text}</div>) : <div className="game-console-empty">Waiting for console output...</div>}
+                          <div ref={endRef} />
+                        </div>
                         <form className="game-command-row" onSubmit={(event) => void sendCommand(event)}><input value={command} onChange={(event) => setCommand(event.target.value)} placeholder="say hello from CloudOS" /><button type="submit" disabled={loading}>Send Command</button></form>
                       </div>
                     ) : null}
@@ -758,7 +773,7 @@ export function GameControlPlane({ games, refresh }: { games: Dashboard | null; 
                               <form className="game-inline-form" onSubmit={(event) => void pullRemoteFile(event)}><input value={pullUrl} onChange={(event) => setPullUrl(event.target.value)} placeholder="https://example.com/file.jar" /><input value={pullFileName} onChange={(event) => setPullFileName(event.target.value)} placeholder="filename.jar" /><button type="submit" disabled={loading}>Pull Remote</button></form>
                               <form className="game-inline-form" onSubmit={(event) => void uploadSelectedFile(event)}><input type="file" multiple onChange={(event) => setUploadFiles(Array.from(event.target.files ?? []))} /><button type="submit" disabled={loading || !uploadFiles.length}>Upload Files</button></form>
                             </div>
-                            <div className="game-file-list">{(files?.entries ?? []).map((entry) => <div key={entry.path} className={`game-file-row ${entry.path === selectedFilePath ? "game-file-row-active" : ""}`}><button type="button" className="game-file-open" onClick={() => { setSelectedFileName(entry.name); setRenameTarget(entry.name); setSelectedFileMode(entry.mode || "644"); if (entry.type === "directory") setDirectory(entry.path); else void openFile(entry.path, entry.name, entry.mode); }}><strong>{entry.name}</strong><span>{entry.type === "directory" ? "Directory" : `${entry.size} bytes`}</span></button><div className="game-row-actions">{entry.type === "file" ? <button type="button" className="small-button" onClick={() => window.open(`/api/games/servers/${selected}/files/download?path=${encodeURIComponent(entry.path)}`, "_blank", "noopener")}>Download</button> : null}<button type="button" className="small-button" onClick={() => void deleteFile(entry.name)}>Delete</button></div></div>)}</div>
+                            <div className="game-file-list game-scroll-pane">{(files?.entries ?? []).map((entry) => <div key={entry.path} className={`game-file-row ${entry.path === selectedFilePath ? "game-file-row-active" : ""}`}><button type="button" className="game-file-open" onClick={() => { setSelectedFileName(entry.name); setRenameTarget(entry.name); setSelectedFileMode(entry.mode || "644"); if (entry.type === "directory") setDirectory(entry.path); else void openFile(entry.path, entry.name, entry.mode); }}><strong>{entry.name}</strong><span>{entry.type === "directory" ? "Directory" : `${entry.size} bytes`}</span></button><div className="game-row-actions">{entry.type === "file" ? <button type="button" className="small-button" onClick={() => window.open(`/api/games/servers/${selected}/files/download?path=${encodeURIComponent(entry.path)}`, "_blank", "noopener")}>Download</button> : null}<button type="button" className="small-button" onClick={() => void deleteFile(entry.name)}>Delete</button></div></div>)}</div>
                           </div>
                           <div className="mini-surface">
                             <div className="info-row"><span>Selected Entry</span><strong>{selectedFileName || "None"}</strong></div>
@@ -779,7 +794,7 @@ export function GameControlPlane({ games, refresh }: { games: Dashboard | null; 
 
                     {tab === "network" ? (
                       <div className="game-section-grid">
-                        <div className="panel"><div className="panel-head"><h2>Allocations</h2></div><div className="panel-body">{detail.allocations.map((allocation) => <div key={allocation.id} className="game-schedule-card"><div className="service-top"><div><strong>{allocation.label}</strong><p>{allocation.isDefault ? "Primary allocation" : "Secondary allocation"}</p></div><div className="button-row">{!allocation.isDefault ? <button type="button" className="small-button" onClick={() => void makePrimaryAllocation(allocation.id)}>Make Primary</button> : null}{!allocation.isDefault ? <button type="button" className="small-button" onClick={() => void removeAllocation(allocation.id)}>Remove</button> : null}</div></div><div className="game-inline-form"><input value={allocationNotes[allocation.id] ?? ""} onChange={(event) => setAllocationNotes((currentValue) => ({ ...currentValue, [allocation.id]: event.target.value }))} placeholder="Notes" /><button type="button" onClick={() => void saveAllocationNotes(allocation.id)}>Save Notes</button></div></div>)}</div></div>
+                        <div className="panel"><div className="panel-head"><h2>Allocations</h2></div><div className="panel-body game-scroll-pane">{detail.allocations.map((allocation) => <div key={allocation.id} className="game-schedule-card"><div className="service-top"><div><strong>{allocation.label}</strong><p>{allocation.isDefault ? "Primary allocation" : "Secondary allocation"}</p></div><div className="button-row">{!allocation.isDefault ? <button type="button" className="small-button" onClick={() => void makePrimaryAllocation(allocation.id)}>Make Primary</button> : null}{!allocation.isDefault ? <button type="button" className="small-button" onClick={() => void removeAllocation(allocation.id)}>Remove</button> : null}</div></div><div className="game-inline-form"><input value={allocationNotes[allocation.id] ?? ""} onChange={(event) => setAllocationNotes((currentValue) => ({ ...currentValue, [allocation.id]: event.target.value }))} placeholder="Notes" /><button type="button" onClick={() => void saveAllocationNotes(allocation.id)}>Save Notes</button></div></div>)}</div></div>
                         <div className="panel"><div className="panel-head"><h2>Assign Allocation</h2></div><div className="panel-body"><form className="game-stack-form" onSubmit={(event) => void assignAllocation(event)}><label className="game-variable-input"><span>Available Node Allocation</span><select value={assignAllocationId} onChange={(event) => setAssignAllocationId(event.target.value)}><option value="">Select allocation</option>{(currentCatalogNode?.allocations ?? []).filter((allocation) => !allocation.assigned).map((allocation) => <option key={allocation.id} value={allocation.id}>{allocation.label}</option>)}</select></label><button type="submit" disabled={loading}>Assign Allocation</button></form><div className="game-detail-grid"><div className="mini-surface"><span className="eyebrow">Current Primary</span><strong>{detail.allocation}</strong><p>{detail.featureLimits.allocations} allocation slots available</p></div><div className="mini-surface"><span className="eyebrow">Traffic</span><strong>{(detail.usage?.networkRxMb ?? 0).toFixed(1)} / {(detail.usage?.networkTxMb ?? 0).toFixed(1)} MB</strong><p>Rx / Tx</p></div></div></div></div>
                       </div>
                     ) : null}

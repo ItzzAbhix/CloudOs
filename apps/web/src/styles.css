@@ -895,6 +895,39 @@ select {
 }
 .game-console-screen {
   min-height: 420px;
+  max-height: clamp(360px, 58vh, 760px);
+  display: grid;
+  align-content: start;
+  gap: 0.18rem;
+}
+.game-console-line {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 0.93rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.game-console-line-output {
+  color: #bffdf1;
+}
+.game-console-line-input {
+  color: #ffd27b;
+}
+.game-console-line-status {
+  color: #89c6ff;
+}
+.game-console-empty {
+  color: rgba(191, 253, 241, 0.7);
+}
+.game-manager-main .panel-body {
+  max-height: clamp(320px, 54vh, 760px);
+  overflow: auto;
+  padding-right: 0.35rem;
+}
+.game-scroll-pane {
+  max-height: clamp(320px, 52vh, 760px);
+  overflow: auto;
+  padding-right: 0.35rem;
 }
 .game-command-row {
   display: grid;
@@ -928,6 +961,7 @@ select {
   margin-top: 1rem;
   display: grid;
   gap: 0.65rem;
+  align-content: start;
 }
 .game-file-row {
   display: grid;
